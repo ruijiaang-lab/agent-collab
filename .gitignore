@@ -1,0 +1,15 @@
+node_modules/
+.DS_Store
+*.log
+
+# Runtime state — meeting data is local-only, regenerated on first run
+data/state.json
+data/*.bak
+
+# Local env
+.env
+.env.local
+
+# Python
+__pycache__/
+*.pyc

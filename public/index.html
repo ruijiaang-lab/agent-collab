@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>圆桌会议控制台</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div>
+          <h1>圆桌会议控制台</h1>
+          <p>你是主席和最终裁决者；Codex、Claude Code、Hermes 作为参会 agent 提供建议、质询和执行。</p>
+        </div>
+        <div class="top-actions">
+          <button id="refreshBtn" title="刷新状态">刷新</button>
+          <a class="button" href="/api/export" target="_blank" rel="noreferrer">导出会议纪要</a>
+        </div>
+      </header>
+
+      <main class="layout roundtable-layout">
+        <section class="panel authority-panel">
+          <div class="panel-head">
+            <h2>主席席位</h2>
+          </div>
+          <div id="chairCard" class="chair-card"></div>
+
+          <div class="panel-head panel-head-inner">
+            <h2>参会席位</h2>
+          </div>
+          <div id="agentsList" class="agents-list"></div>
+
+          <div class="guide">
+            <h3>会议规则</h3>
+            <p>主席发起议题、下达约束、裁决提案。Agent 的输出默认是建议，不能覆盖主席裁决。</p>
+          </div>
+        </section>
+
+        <section class="main-stack">
+          <section class="panel meeting-panel">
+            <div class="panel-head">
+              <h2>当前会议</h2>
+              <span id="updatedAt" class="muted"></span>
+            </div>
+            <div id="meetingSummary" class="meeting-summary"></div>
+            <form id="meetingForm" class="meeting-form">
+              <input id="meetingTitle" placeholder="会议议题" />
+              <textarea id="meetingObjective" rows="2" placeholder="主席设定本轮目标、边界和成功标准"></textarea>
+              <div class="inline-fields meeting-fields">
+                <select id="meetingPhase">
+                  <option value="open">开启</option>
+                  <option value="briefing">主席简报</option>
+                  <option value="debate">圆桌讨论</option>
+                  <option value="assignment">分工执行</option>
+                  <option value="ruling">主席裁决</option>
+                  <option value="closed">关闭</option>
+                </select>
+                <select id="meetingFloor">
+                  <option value="chair">主席</option>
+                  <option value="codex">Codex</option>
+                  <option value="claude-code">Claude Code</option>
+                  <option value="hermes">Hermes</option>
+                </select>
+                <input id="meetingRound" type="number" min="1" step="1" />
+              </div>
+              <button type="submit">更新会议</button>
+            </form>
+          </section>
+
+          <section class="panel discussion">
+            <div class="panel-head">
+              <h2>圆桌发言</h2>
+            </div>
+            <div id="messages" class="messages"></div>
+            <form id="turnForm" class="composer">
+              <div class="inline-fields turn-fields">
+                <select id="turnAgent">
+                  <option value="chair">主席</option>
+                  <option value="codex">Codex</option>
+                  <option value="claude-code">Claude Code</option>
+                  <option value="hermes">Hermes</option>
+                  <option value="system">System</option>
+                </select>
+                <select id="turnStance">
+                  <option value="主席指令">主席指令</option>
+                  <option value="观点">观点</option>
+                  <option value="质询">质询</option>
+                  <option value="风险">风险</option>
+                  <option value="执行计划">执行计划</option>
+                  <option value="复盘">复盘</option>
+                </select>
+              </div>
+              <textarea id="turnContent" rows="3" placeholder="输入本轮发言"></textarea>
+              <button type="submit">提交发言</button>
+            </form>
+          </section>
+        </section>
+
+        <section class="side-stack">
+          <section class="panel chair-command">
+            <div class="panel-head">
+              <h2>主席指令</h2>
+            </div>
+            <form id="directiveForm" class="directive-form">
+              <input id="directiveTitle" placeholder="指令标题" />
+              <textarea id="directiveContent" rows="3" placeholder="最高指令、约束、禁止事项或验收标准"></textarea>
+              <select id="directivePriority">
+                <option value="highest">最高</option>
+                <option value="high">高</option>
+                <option value="normal">普通</option>
+              </select>
+              <button type="submit">下达主席指令</button>
+            </form>
+            <div id="directives" class="directives"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>提案与裁决</h2>
+            </div>
+            <form id="motionForm" class="motion-form">
+              <input id="motionTitle" placeholder="提案标题" />
+              <textarea id="motionRationale" rows="2" placeholder="提案理由"></textarea>
+              <select id="motionProposedBy">
+                <option value="codex">Codex</option>
+                <option value="claude-code">Claude Code</option>
+                <option value="hermes">Hermes</option>
+                <option value="chair">主席</option>
+              </select>
+              <button type="submit">提交提案</button>
+            </form>
+            <div id="motions" class="motions"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>行动项</h2>
+            </div>
+            <form id="taskForm" class="task-form">
+              <input id="taskTitle" placeholder="行动项标题" />
+              <textarea id="taskDescription" rows="2" placeholder="执行说明"></textarea>
+              <div class="inline-fields">
+                <select id="taskOwner">
+                  <option value="unassigned">未分配</option>
+                  <option value="codex">Codex</option>
+                  <option value="claude-code">Claude Code</option>
+                  <option value="hermes">Hermes</option>
+                </select>
+                <select id="taskPriority">
+                  <option value="high">高</option>
+                  <option value="medium" selected>中</option>
+                  <option value="low">低</option>
+                </select>
+              </div>
+              <button type="submit">创建行动项</button>
+            </form>
+            <div id="tasks" class="tasks"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>交接</h2>
+            </div>
+            <form id="handoffForm" class="handoff-form">
+              <select id="handoffLead">
+                <option value="codex">Codex</option>
+                <option value="claude-code">Claude Code</option>
+                <option value="hermes">Hermes</option>
+              </select>
+              <textarea id="handoffNext" rows="2" placeholder="下一步动作"></textarea>
+              <textarea id="handoffBlockers" rows="2" placeholder="阻塞项"></textarea>
+              <button type="submit">更新交接</button>
+            </form>
+          </section>
+        </section>
+      </main>
+    </div>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

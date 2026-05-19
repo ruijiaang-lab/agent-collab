@@ -1,0 +1,16 @@
+{
+  "name": "agent-collab",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local WebUI and coordination hub for Codex, Claude Code, and Hermes.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "agent": "node scripts/agent.mjs",
+    "mcp": "/Users/ssd/hermes-agent/venv/bin/python scripts/mcp_server.py"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
