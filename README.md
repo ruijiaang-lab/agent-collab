@@ -109,9 +109,17 @@ npm start
 跑测试：
 
 ```bash
-npm start &
-node scripts/test-reprompt.mjs
+npm test
 ```
+
+或者用 Docker（零 Node 依赖）：
+
+```bash
+docker build -t agent-collab .
+docker run --rm -p 5057:5057 -v "$(pwd)/data:/app/data" agent-collab
+```
+
+> 更多启动方式（Compose、自定义端口、健康检查）见 [docs/run.md](docs/run.md)。
 
 ---
 
@@ -189,9 +197,9 @@ npm run agent -- export
 
 - [x] **v0.1** 主席台 WebUI + state machine + MCP/CLI 三通道
 - [x] **v0.2** 主席否决后自动 re-prompt 失败方（[issue #1](https://github.com/ruijiaang-lab/agent-collab/issues/1)）
+- [x] **v0.2** Docker 一键启动 + 启动文档（[docs/run.md](docs/run.md)）
 - [ ] **v0.3** 真 Agent runner（Claude / OpenAI 兼容端点，本地填 key 即可加入圆桌）
-- [ ] **v0.4** Docker 一键启动 + 部署文档
-- [ ] **v0.5** 决策回放 / 时间旅行
+- [ ] **v0.4** 决策回放 / 时间旅行
 - [ ] **v1.0** 多会议并行 + 会议模板 + Cursor / Devin 接入
 
 ---
