@@ -179,6 +179,12 @@ function sanitizeText(value, fallback = "") {
   return String(value ?? fallback).trim();
 }
 
+function agentDisplayName(agentId) {
+  if (agentId === "chair") return state?.chair?.name || "主席";
+  const agent = state?.agents?.find((item) => item.id === agentId);
+  return agent?.name || agentId;
+}
+
 function addMessage({ agent, content, type = "message", taskId = null, meetingId = null }) {
   const message = {
     id: id(),
@@ -357,10 +363,47 @@ async function handleApi(req, res, url) {
     const body = await readJson(req);
     const motion = state.motions.find((item) => item.id === motionMatch[1]);
     if (!motion) return json(res, 404, { error: "motion not found" });
+    const previousStatus = motion.status;
     if (body.status !== undefined) motion.status = sanitizeText(body.status, motion.status);
     if (body.ruling !== undefined) motion.ruling = sanitizeText(body.ruling, motion.ruling);
     motion.updatedAt = new Date().toISOString();
     addMessage({ agent: "chair", type: "chair-ruling", content: `裁决提案：${motion.title}\n状态：${motion.status}\n${motion.ruling}` });
+
+    // Auto re-prompt on rejection: closes issue #1.
+    // When chair rejects a motion, push a high-priority directive carrying
+    // the ruling, hand the floor back to the proposer, and bump the round
+    // so the proposer's next turn lands in round + 1.
+    if (
+      motion.status === "rejected" &&
+      previousStatus !== "rejected" &&
+      !motion.repromptedAt
+    ) {
+      const directive = {
+        id: id(),
+        title: `Re-prompt：${motion.title}`,
+        content: motion.ruling
+          ? `主席否决理由：${motion.ruling}\n请 ${agentDisplayName(motion.proposedBy)} 据此修订方案后重新提案。`
+          : `主席否决该提案。请 ${agentDisplayName(motion.proposedBy)} 修订后重新提案。`,
+        priority: "high",
+        status: "active",
+        createdAt: new Date().toISOString(),
+        sourceMotionId: motion.id
+      };
+      state.directives.unshift(directive);
+
+      state.meeting.floor = motion.proposedBy;
+      state.meeting.round = (Number(state.meeting.round) || 1) + 1;
+      state.meeting.updatedAt = new Date().toISOString();
+
+      motion.repromptedAt = new Date().toISOString();
+
+      addMessage({
+        agent: "system",
+        type: "reprompt",
+        content: `已自动 re-prompt ${agentDisplayName(motion.proposedBy)}（round ${state.meeting.round}）。否决理由已写入高优 directive。`
+      });
+    }
+
     await persist();
     broadcast();
     return json(res, 200, motion);
