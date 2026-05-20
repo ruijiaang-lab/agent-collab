@@ -104,6 +104,7 @@ const DEFAULT_STATE = {
       createdAt: new Date().toISOString()
     }
   ],
+  events: [],
   handoff: {
     currentLead: "codex",
     nextAction: "在 WebUI 中创建真实任务，并把任务链接或 handoff 内容交给 Claude Code / Hermes。",
@@ -145,8 +146,46 @@ function ensureStateShape(rawState) {
   next.messages = Array.isArray(next.messages) ? next.messages : DEFAULT_STATE.messages;
   next.tasks = Array.isArray(next.tasks) ? next.tasks : DEFAULT_STATE.tasks;
   next.decisions = Array.isArray(next.decisions) ? next.decisions : DEFAULT_STATE.decisions;
+  next.events = Array.isArray(next.events) ? next.events : [];
   next.handoff = next.handoff || DEFAULT_STATE.handoff;
+
+  // Backfill: ensure each motion has a votes array and decisionChain root.
+  next.motions.forEach((motion) => {
+    if (!Array.isArray(motion.votes)) motion.votes = [];
+    if (!motion.meetingId) motion.meetingId = next.meeting.id;
+    if (motion.round == null) motion.round = next.meeting.round || 1;
+  });
+  next.messages.forEach((message) => {
+    if (!message.meetingId) message.meetingId = next.meeting.id;
+    if (message.round == null) message.round = next.meeting.round || 1;
+  });
+  next.directives.forEach((directive) => {
+    if (directive.meetingId == null) directive.meetingId = next.meeting.id;
+  });
+  next.tasks.forEach((task) => {
+    if (task.meetingId == null) task.meetingId = next.meeting.id;
+  });
+
   return next;
+}
+
+// Append-only event log. Every mutation that the chair / agents would want to
+// audit later (proposals, votes, rulings, re-prompts, task transitions) goes
+// through this so the timeline view and decisionChain can be reconstructed
+// from history rather than from current-state inference.
+function recordEvent({ type, actor, payload = {}, refs = {} }) {
+  const event = {
+    id: id(),
+    type,
+    actor: sanitizeText(actor, "system"),
+    meetingId: state.meeting?.id || null,
+    round: state.meeting?.round || 1,
+    payload,
+    refs,
+    createdAt: new Date().toISOString()
+  };
+  state.events.push(event);
+  return event;
 }
 
 function persist() {
@@ -185,13 +224,14 @@ function agentDisplayName(agentId) {
   return agent?.name || agentId;
 }
 
-function addMessage({ agent, content, type = "message", taskId = null, meetingId = null }) {
+function addMessage({ agent, content, type = "message", taskId = null, meetingId = null, round = null }) {
   const message = {
     id: id(),
     agent: sanitizeText(agent, "system"),
     type: sanitizeText(type, "message"),
     taskId: taskId || null,
     meetingId: meetingId || state.meeting?.id || null,
+    round: round ?? (state.meeting?.round || 1),
     content: sanitizeText(content),
     createdAt: new Date().toISOString()
   };
