@@ -1,5 +1,6 @@
 const stateUrl = "/api/state";
 let state = null;
+let expandedMotionId = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -263,25 +264,129 @@ function renderDirectives() {
 function renderMotions() {
   $("motions").innerHTML = state.motions
     .map((motion) => {
+      const tally = motionTally(motion);
+      const expanded = expandedMotionId === motion.id;
       return `
-        <article class="motion-card">
+        <article class="motion-card ${expanded ? "motion-expanded" : ""}">
           <div class="task-title">
             <strong>${escapeHtml(motion.title)}</strong>
             <span class="status ${escapeHtml(motion.status)}">${escapeHtml(motion.status)}</span>
           </div>
           <p>${escapeHtml(motion.rationale)}</p>
-          <p>提案人：${escapeHtml(agentName(motion.proposedBy))}</p>
+          <p class="motion-meta">
+            <span>提案人：${escapeHtml(agentName(motion.proposedBy))}</span>
+            <span class="motion-tally" title="赞成 / 反对 / 弃权">
+              <span class="tally-support">●${tally.support}</span>
+              <span class="tally-oppose">●${tally.oppose}</span>
+              <span class="tally-abstain">●${tally.abstain}</span>
+            </span>
+            ${motion.repromptedAt ? '<span class="motion-flag">re-prompted</span>' : ""}
+          </p>
           ${motion.ruling ? `<p class="ruling-text">主席裁决：${escapeHtml(motion.ruling)}</p>` : ""}
+          <div class="motion-vote-row" data-motion="${motion.id}">
+            <button class="vote-btn vote-support" data-vote="support" data-motion="${motion.id}" type="button">赞成</button>
+            <button class="vote-btn vote-oppose" data-vote="oppose" data-motion="${motion.id}" type="button">反对</button>
+            <button class="vote-btn vote-abstain" data-vote="abstain" data-motion="${motion.id}" type="button">弃权</button>
+            <select class="vote-agent" data-motion="${motion.id}">
+              <option value="codex">Codex 投</option>
+              <option value="claude-code">Claude Code 投</option>
+              <option value="hermes">Hermes 投</option>
+            </select>
+          </div>
           <div class="task-actions">
             ${motionButton(motion, "accepted", "通过")}
             ${motionButton(motion, "rejected", "否决")}
             ${motionButton(motion, "deferred", "暂缓")}
             ${motionButton(motion, "needs-work", "重议")}
+            <button class="chain-toggle" data-chain="${motion.id}" type="button">${expanded ? "收起决策链" : "展开决策链"}</button>
           </div>
+          ${expanded ? renderChainPlaceholder(motion.id) : ""}
         </article>
       `;
     })
     .join("");
+  if (expandedMotionId) {
+    hydrateChain(expandedMotionId);
+  }
+}
+
+function motionTally(motion) {
+  const votes = Array.isArray(motion.votes) ? motion.votes : [];
+  return {
+    support: votes.filter((v) => v.position === "support").length,
+    oppose: votes.filter((v) => v.position === "oppose").length,
+    abstain: votes.filter((v) => v.position === "abstain").length
+  };
+}
+
+function renderChainPlaceholder(motionId) {
+  return `<div class="decision-chain" data-chain-body="${motionId}"><div class="chain-loading">加载决策链…</div></div>`;
+}
+
+async function hydrateChain(motionId) {
+  const host = document.querySelector(`[data-chain-body="${motionId}"]`);
+  if (!host) return;
+  try {
+    const data = await api(`/api/motions/${motionId}/chain`);
+    host.innerHTML = renderChainBody(data.chain || []);
+  } catch (error) {
+    host.innerHTML = `<div class="chain-error">加载失败：${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderChainBody(chain) {
+  if (chain.length === 0) return '<div class="chain-empty">尚无事件</div>';
+  return `
+    <ol class="chain-steps">
+      ${chain.map((event) => renderChainStep(event)).join("")}
+    </ol>
+  `;
+}
+
+function renderChainStep(event) {
+  const meta = chainStepMeta(event);
+  const actor = event.actor ? agentName(event.actor) : "system";
+  return `
+    <li class="chain-step chain-step-${escapeHtml(event.type)}">
+      <span class="chain-step-dot" style="background:${meta.color}"></span>
+      <div class="chain-step-body">
+        <div class="chain-step-head">
+          <strong>${escapeHtml(meta.label)}</strong>
+          <span class="chain-step-actor">${escapeHtml(actor)}</span>
+          <span class="chain-step-time">${timeLabel(event.createdAt)}</span>
+        </div>
+        ${renderChainPayload(event)}
+      </div>
+    </li>
+  `;
+}
+
+function chainStepMeta(event) {
+  switch (event.type) {
+    case "motion.proposed": return { label: "提案", color: "#2f81f7" };
+    case "motion.voted": return { label: "投票", color: "#2ea043" };
+    case "motion.ruled": return { label: "主席裁决", color: "#d29922" };
+    case "motion.reprompted": return { label: "Re-prompt（自动）", color: "#f85149" };
+    default: return { label: event.type, color: "#8b949e" };
+  }
+}
+
+function renderChainPayload(event) {
+  const payload = event.payload || {};
+  if (event.type === "motion.proposed") {
+    return `<p class="chain-payload">${escapeHtml(payload.rationale || "")}</p>`;
+  }
+  if (event.type === "motion.voted") {
+    const position = payload.position === "support" ? "赞成" : payload.position === "oppose" ? "反对" : "弃权";
+    return `<p class="chain-payload"><span class="stance-chip">${escapeHtml(position)}</span> ${escapeHtml(payload.reason || "")}</p>`;
+  }
+  if (event.type === "motion.ruled") {
+    return `<p class="chain-payload">${escapeHtml(payload.from || "?")} → <strong>${escapeHtml(payload.to || "?")}</strong>${payload.ruling ? `<br />${escapeHtml(payload.ruling)}` : ""}</p>`;
+  }
+  if (event.type === "motion.reprompted") {
+    return `<p class="chain-payload">轮次推进至 R${escapeHtml(payload.newRound)}；已自动追加高优 directive。</p>`;
+  }
+  return "";
 }
 
 function motionButton(motion, status, label) {
@@ -403,7 +508,26 @@ $("motionForm").addEventListener("submit", async (event) => {
 });
 
 $("motions").addEventListener("click", async (event) => {
-  const button = event.target.closest("button[data-motion]");
+  const chainBtn = event.target.closest("button[data-chain]");
+  if (chainBtn) {
+    const id = chainBtn.dataset.chain;
+    expandedMotionId = expandedMotionId === id ? null : id;
+    renderMotions();
+    return;
+  }
+  const voteBtn = event.target.closest("button[data-vote]");
+  if (voteBtn) {
+    const motionId = voteBtn.dataset.motion;
+    const row = document.querySelector(`.motion-vote-row[data-motion="${motionId}"]`);
+    const voter = row?.querySelector(".vote-agent")?.value || "codex";
+    await api(`/api/motions/${motionId}/votes`, {
+      method: "POST",
+      body: { agent: voter, position: voteBtn.dataset.vote, reason: "" }
+    });
+    await load();
+    return;
+  }
+  const button = event.target.closest("button[data-motion][data-status]");
   if (!button) return;
   await api(`/api/motions/${button.dataset.motion}`, {
     method: "PATCH",
