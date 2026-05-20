@@ -14,6 +14,14 @@
           <p>你是主席和最终裁决者；Codex、Claude Code、Hermes 作为参会 agent 提供建议、质询和执行。</p>
         </div>
         <div class="top-actions">
+          <div class="auto-mode-toggle" title="开启后，floor 切到 agent 会自动唤醒它直到剩余轮数为 0">
+            <label>
+              <input type="checkbox" id="autoModeToggle" />
+              自动模式
+            </label>
+            <span id="autoRemaining" class="muted">剩余 0 轮</span>
+            <input id="autoMaxRounds" type="number" min="1" max="50" value="10" title="自动模式单次最多轮数" />
+          </div>
           <button id="refreshBtn" title="刷新状态">刷新</button>
           <a class="button" href="/api/export" target="_blank" rel="noreferrer">导出会议纪要</a>
         </div>

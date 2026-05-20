@@ -1,6 +1,6 @@
 {
   "name": "agent-collab",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Chair-authority multi-agent collaboration hub for Codex, Claude Code, and Hermes.",
   "type": "module",
@@ -10,7 +10,7 @@
     "agent": "node scripts/agent.mjs",
     "mcp": "python3 scripts/mcp_server.py",
     "mcp:node": "node scripts/mcp-server.mjs",
-    "test": "node scripts/test-reprompt.mjs && node scripts/test-events.mjs"
+    "test": "node scripts/test-reprompt.mjs && node scripts/test-events.mjs && node scripts/test-runner.mjs"
   },
   "engines": {
     "node": ">=20"

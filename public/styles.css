@@ -695,6 +695,99 @@ pre {
   }
 }
 
+/* ===== v0.4 · auto mode + wake button =========================== */
+
+.auto-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  font-size: 12px;
+}
+
+.auto-mode-toggle label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.auto-mode-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--chair);
+}
+
+.auto-mode-toggle input[type="number"] {
+  width: 52px;
+  padding: 2px 4px;
+  font-size: 11px;
+  text-align: center;
+}
+
+.wake-btn {
+  margin-left: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  border: 1px solid var(--lane-color, var(--accent));
+  background: transparent;
+  color: var(--lane-color, var(--accent));
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.wake-btn:hover:not(:disabled) {
+  background: var(--lane-color, var(--accent));
+  color: #0d1117;
+}
+
+.wake-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.wake-btn-thinking {
+  background: var(--lane-color, var(--accent));
+  color: #0d1117;
+  animation: thinking-pulse 1.6s ease-in-out infinite;
+}
+
+.lane-badge-thinking {
+  background: var(--lane-color, var(--accent));
+  animation: thinking-pulse 1.6s ease-in-out infinite;
+}
+
+.lane-thinking {
+  position: relative;
+}
+
+.lane-thinking::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--lane-color, var(--accent)), transparent);
+  animation: lane-scan 1.6s linear infinite;
+}
+
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@keyframes lane-scan {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
 /* ===== Motion drill-down (decision chain) ======================== */
 
 .motion-meta {

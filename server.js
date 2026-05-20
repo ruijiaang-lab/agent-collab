@@ -3,6 +3,15 @@ import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
+import {
+  init as initRunner,
+  runAgent,
+  getInflight,
+  setAutoMode,
+  getAutoState,
+  scheduleAuto,
+  agentConfigs
+} from "./scripts/runner.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 5057);
@@ -36,6 +45,9 @@ const DEFAULT_STATE = {
       "三方 agent 依次给出观点、风险、分工建议",
       "主席裁决最终方案和行动项"
     ],
+    autoMode: false,
+    autoMaxRounds: 10,
+    autoRoundsRemaining: 0,
     updatedAt: new Date().toISOString()
   },
   agents: [
@@ -140,6 +152,10 @@ function ensureStateShape(rawState) {
   };
   next.chair = next.chair || DEFAULT_STATE.chair;
   next.meeting = next.meeting || DEFAULT_STATE.meeting;
+  // Backfill auto-mode fields added in v0.4 — older state.json predates them.
+  if (typeof next.meeting.autoMode !== "boolean") next.meeting.autoMode = false;
+  if (typeof next.meeting.autoMaxRounds !== "number") next.meeting.autoMaxRounds = 10;
+  if (typeof next.meeting.autoRoundsRemaining !== "number") next.meeting.autoRoundsRemaining = 0;
   next.directives = Array.isArray(next.directives) ? next.directives : DEFAULT_STATE.directives;
   next.motions = Array.isArray(next.motions) ? next.motions : [];
   next.agents = Array.isArray(next.agents) ? next.agents : DEFAULT_STATE.agents;
@@ -240,6 +256,90 @@ function addMessage({ agent, content, type = "message", taskId = null, meetingId
   return message;
 }
 
+// Shared helpers — used both by HTTP routes and by the v0.4 subprocess runner
+// (scripts/runner.mjs) via dependency injection. Kept here so the route bodies
+// and the runner dispatch path go through identical state-mutation logic.
+
+function castVote({ motionId, agent, position, reason }) {
+  const motion = state.motions.find((item) => item.id === motionId);
+  if (!motion) throw new Error("motion not found");
+  const voter = sanitizeText(agent);
+  if (!voter || !["support", "oppose", "abstain"].includes(position)) {
+    throw new Error("agent and position (support|oppose|abstain) are required");
+  }
+  if (!Array.isArray(motion.votes)) motion.votes = [];
+  motion.votes = motion.votes.filter((vote) => vote.agent !== voter);
+  const vote = {
+    agent: voter,
+    position,
+    reason: sanitizeText(reason),
+    round: state.meeting?.round || 1,
+    createdAt: new Date().toISOString()
+  };
+  motion.votes.push(vote);
+  motion.updatedAt = vote.createdAt;
+  addMessage({
+    agent: voter,
+    type: "motion-vote",
+    content: `对提案【${motion.title}】投${position === "support" ? "赞成" : position === "oppose" ? "反对" : "弃权"}票${vote.reason ? `：${vote.reason}` : ""}`
+  });
+  recordEvent({
+    type: "motion.voted",
+    actor: voter,
+    payload: { position, reason: vote.reason },
+    refs: { motionId: motion.id }
+  });
+  return { motion, vote };
+}
+
+function proposeMotion({ title, rationale, proposedBy }) {
+  const motion = {
+    id: id(),
+    title: sanitizeText(title),
+    rationale: sanitizeText(rationale),
+    proposedBy: sanitizeText(proposedBy, "codex"),
+    status: "proposed",
+    ruling: "",
+    votes: [],
+    meetingId: state.meeting?.id || null,
+    round: state.meeting?.round || 1,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  if (!motion.title || !motion.rationale) throw new Error("title and rationale are required");
+  state.motions.unshift(motion);
+  addMessage({ agent: motion.proposedBy, type: "motion", content: `提出提案：${motion.title}\n${motion.rationale}` });
+  recordEvent({
+    type: "motion.proposed",
+    actor: motion.proposedBy,
+    payload: { title: motion.title, rationale: motion.rationale },
+    refs: { motionId: motion.id }
+  });
+  return motion;
+}
+
+function setFloor(agentId) {
+  const newFloor = sanitizeText(agentId, state.meeting.floor);
+  state.meeting.floor = newFloor;
+  state.meeting.updatedAt = new Date().toISOString();
+  return newFloor;
+}
+
+// Inject everything the runner needs. The runner holds no state of its own —
+// just the per-agent in-flight lock — and asks for a fresh state snapshot via
+// getState() each call so we never serve stale data.
+initRunner({
+  getState: () => state,
+  agentDisplayName,
+  addMessage,
+  castVote,
+  proposeMotion,
+  setFloor,
+  recordEvent,
+  persist,
+  broadcast
+});
+
 function exportMarkdown() {
   const agentName = (agentId) => {
     if (agentId === "chair") return state.chair.name;
@@ -330,6 +430,7 @@ async function handleApi(req, res, url) {
 
   if (req.method === "PATCH" && url.pathname === "/api/meeting") {
     const body = await readJson(req);
+    const previousFloor = state.meeting.floor;
     for (const key of ["title", "objective", "phase", "floor"]) {
       if (body[key] !== undefined) state.meeting[key] = sanitizeText(body[key], state.meeting[key]);
     }
@@ -344,6 +445,7 @@ async function handleApi(req, res, url) {
     addMessage({ agent: body.agent || "chair", type: "meeting", content: `更新会议：${state.meeting.title} / ${state.meeting.phase}` });
     await persist();
     broadcast();
+    if (state.meeting.floor !== previousFloor) scheduleAuto(state.meeting.floor);
     return json(res, 200, state.meeting);
   }
 
@@ -371,40 +473,25 @@ async function handleApi(req, res, url) {
     const stance = sanitizeText(body.stance, "发言");
     const content = sanitizeText(body.content);
     if (!content) return json(res, 400, { error: "content is required" });
+    const previousFloor = state.meeting.floor;
     const message = addMessage({ agent, type: "roundtable-turn", content: `【${stance}】${content}` });
     if (body.nextFloor) state.meeting.floor = sanitizeText(body.nextFloor, state.meeting.floor);
     await persist();
     broadcast();
+    if (state.meeting.floor !== previousFloor) scheduleAuto(state.meeting.floor);
     return json(res, 201, message);
   }
 
   if (req.method === "POST" && url.pathname === "/api/motions") {
     const body = await readJson(req);
-    const motion = {
-      id: id(),
-      title: sanitizeText(body.title),
-      rationale: sanitizeText(body.rationale),
-      proposedBy: sanitizeText(body.proposedBy, "codex"),
-      status: "proposed",
-      ruling: "",
-      votes: [],
-      meetingId: state.meeting?.id || null,
-      round: state.meeting?.round || 1,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    if (!motion.title || !motion.rationale) return json(res, 400, { error: "title and rationale are required" });
-    state.motions.unshift(motion);
-    addMessage({ agent: motion.proposedBy, type: "motion", content: `提出提案：${motion.title}\n${motion.rationale}` });
-    recordEvent({
-      type: "motion.proposed",
-      actor: motion.proposedBy,
-      payload: { title: motion.title, rationale: motion.rationale },
-      refs: { motionId: motion.id }
-    });
-    await persist();
-    broadcast();
-    return json(res, 201, motion);
+    try {
+      const motion = proposeMotion({ title: body.title, rationale: body.rationale, proposedBy: body.proposedBy });
+      await persist();
+      broadcast();
+      return json(res, 201, motion);
+    } catch (error) {
+      return json(res, 400, { error: error.message });
+    }
   }
 
   // Agent voting on a motion. Agents express position (support/oppose/abstain)
@@ -413,38 +500,20 @@ async function handleApi(req, res, url) {
   const motionVoteMatch = url.pathname.match(/^\/api\/motions\/([^/]+)\/votes$/);
   if (req.method === "POST" && motionVoteMatch) {
     const body = await readJson(req);
-    const motion = state.motions.find((item) => item.id === motionVoteMatch[1]);
-    if (!motion) return json(res, 404, { error: "motion not found" });
-    const voter = sanitizeText(body.agent);
-    const position = sanitizeText(body.position);
-    if (!voter || !["support", "oppose", "abstain"].includes(position)) {
-      return json(res, 400, { error: "agent and position (support|oppose|abstain) are required" });
+    try {
+      const { vote } = castVote({
+        motionId: motionVoteMatch[1],
+        agent: body.agent,
+        position: body.position,
+        reason: body.reason
+      });
+      await persist();
+      broadcast();
+      return json(res, 201, vote);
+    } catch (error) {
+      const status = error.message === "motion not found" ? 404 : 400;
+      return json(res, status, { error: error.message });
     }
-    if (!Array.isArray(motion.votes)) motion.votes = [];
-    motion.votes = motion.votes.filter((vote) => vote.agent !== voter);
-    const vote = {
-      agent: voter,
-      position,
-      reason: sanitizeText(body.reason),
-      round: state.meeting?.round || 1,
-      createdAt: new Date().toISOString()
-    };
-    motion.votes.push(vote);
-    motion.updatedAt = vote.createdAt;
-    addMessage({
-      agent: voter,
-      type: "motion-vote",
-      content: `对提案【${motion.title}】投${position === "support" ? "赞成" : position === "oppose" ? "反对" : "弃权"}票${vote.reason ? `：${vote.reason}` : ""}`
-    });
-    recordEvent({
-      type: "motion.voted",
-      actor: voter,
-      payload: { position, reason: vote.reason },
-      refs: { motionId: motion.id }
-    });
-    await persist();
-    broadcast();
-    return json(res, 201, vote);
   }
 
   const motionMatch = url.pathname.match(/^\/api\/motions\/([^/]+)$/);
@@ -453,6 +522,7 @@ async function handleApi(req, res, url) {
     const motion = state.motions.find((item) => item.id === motionMatch[1]);
     if (!motion) return json(res, 404, { error: "motion not found" });
     const previousStatus = motion.status;
+    const previousFloor = state.meeting.floor;
     if (body.status !== undefined) motion.status = sanitizeText(body.status, motion.status);
     if (body.ruling !== undefined) motion.ruling = sanitizeText(body.ruling, motion.ruling);
     motion.updatedAt = new Date().toISOString();
@@ -510,6 +580,7 @@ async function handleApi(req, res, url) {
 
     await persist();
     broadcast();
+    if (state.meeting.floor !== previousFloor) scheduleAuto(state.meeting.floor);
     return json(res, 200, motion);
   }
 
@@ -576,6 +647,53 @@ async function handleApi(req, res, url) {
     await persist();
     broadcast();
     return json(res, 200, state.handoff);
+  }
+
+  // v0.4 — manual wake button. Spawns the agent's local CLI (claude / hermes /
+  // codex) using whatever the user is already logged into. Never reads API keys.
+  // Returns immediately once the subprocess is launched; the actual reply lands
+  // via persist() + broadcast() once the runner finishes.
+  const wakeMatch = url.pathname.match(/^\/api\/agents\/([^/]+)\/wake$/);
+  if (req.method === "POST" && wakeMatch) {
+    const agentId = wakeMatch[1];
+    if (agentId === "chair") return json(res, 403, { error: "chair cannot be woken — chair is the human user" });
+    const config = agentConfigs[agentId];
+    if (!config) return json(res, 404, { error: `unknown agent: ${agentId}` });
+    if (config.enabled === false) return json(res, 503, { error: `agent ${agentId} runner is disabled (CLI not installed?)` });
+    if (getInflight().has(agentId)) return json(res, 409, { error: `agent ${agentId} is already in-flight` });
+    // Fire-and-forget; the runner records its own events and broadcasts state
+    // changes when done. Caller gets a 202 with the agentId so the WebUI can
+    // flip the "thinking" indicator immediately.
+    setImmediate(() => runAgent(agentId, { triggeredBy: "manual" }));
+    return json(res, 202, { ok: true, agentId, triggeredBy: "manual" });
+  }
+
+  if (req.method === "PATCH" && url.pathname === "/api/meeting/auto") {
+    const body = await readJson(req);
+    const result = await setAutoMode({ enabled: body.enabled, maxRounds: body.maxRounds });
+    addMessage({
+      agent: "chair",
+      type: "meeting",
+      content: result.autoMode
+        ? `开启自动模式：剩余 ${result.autoRoundsRemaining} 轮（每轮上限 ${result.autoMaxRounds}）`
+        : `关闭自动模式`
+    });
+    await persist();
+    broadcast();
+    // If we just enabled auto mode and someone is already holding the floor,
+    // kick them so the human doesn't have to click anything.
+    if (result.autoMode && state.meeting.floor !== "chair") scheduleAuto(state.meeting.floor);
+    return json(res, 200, result);
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/agents/inflight") {
+    return json(res, 200, {
+      inflight: Array.from(getInflight()),
+      auto: getAutoState(),
+      configs: Object.fromEntries(
+        Object.entries(agentConfigs).map(([id, cfg]) => [id, { bin: cfg.bin, enabled: cfg.enabled !== false }])
+      )
+    });
   }
 
   // Server-sent events for WebUI live updates. Renamed from /api/events

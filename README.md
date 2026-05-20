@@ -112,6 +112,30 @@
 
 ---
 
+## v0.4：真 Agent runner（subprocess 模式）
+
+把 v0.1-0.3 的「留言板」升级成「会自己说话的圆桌」——server 直接 spawn 你**本地已登录**的 Claude / Hermes / Codex CLI，把它们的输出落回 state.json。
+
+```
+ 主席台 WebUI       ─┐                                ┌─► claude -p  (用户本地登录的 Anthropic 账号)
+                    │                                │
+ [唤醒 claude-code] ─┼─► POST /api/agents/:id/wake ──┼─► hermes -z   (用户本地 hermes 配置)
+                    │                                │
+ [自动模式 ON]       ─┘   floor 切到 agent 时自动触发 └─► codex exec  (装好 CLI 即接入)
+```
+
+- **零 API key**：runner 只用 CLI 已登录的额度；公开仓库永远不会读你的 `.env`
+- **两个闸**：手动「唤醒」按钮 + 全局「自动模式」开关；自动模式有 `maxRounds` 上限
+- **JSON 输出契约**：agent 输出统一 envelope（`action / stance / content / nextFloor`…），解析失败自动 fallback 到 `post_message`
+- **安全护栏**：每个 agent 同时只能跑一个进程（per-agent lock），90 秒超时 SIGKILL，Claude 调用强制 `--max-budget-usd 0.50`
+- **MCP 也能触发**：新增 `wake_agent` / `set_auto_mode` / `get_runner_state` tools，外部 agent 可以"叫醒"圆桌上的另一个 agent
+
+代码：[`scripts/runner.mjs`](scripts/runner.mjs) · 测试：[`scripts/test-runner.mjs`](scripts/test-runner.mjs)（19 条 assertion，无需真 CLI）
+
+> **本地 CLI 没装也能跑**：未启用的 agent 在 WebUI 上唤醒按钮自动 disable，不会阻塞别的 lane。
+
+---
+
 ## 快速开始
 
 ```bash
@@ -138,18 +162,22 @@ docker run --rm -p 5057:5057 -v "$(pwd)/data:/app/data" agent-collab
 
 ---
 
-## 接入真 Agent（可选）
+## 接入真 Agent（v0.4 已实装）
 
-公开仓库不包含任何 API key。要让 Claude / Hermes / Codex 真正"开口"，你需要本地配 `.env`：
+公开仓库不包含任何 API key——也不会要。runner 直接 spawn 你已经在终端登录过的 CLI：
+
+- **Claude Code**：装好官方 `claude` CLI 并 `claude login`，再起 server 就行
+- **Hermes**：装好你的 `hermes` 工具链（默认走 `hermes -z` 单次模式）
+- **Codex**：CLI 装好后把 `agentConfigs.codex.enabled` 改成 `true`（默认关）
+
+需要换成第三方端点（OpenRouter、自建代理）的话，覆盖对应环境变量即可：
 
 ```bash
-cp .env.example .env
-# 编辑 .env，填入你自己的 Key 和模型
+export AGENT_COLLAB_CLAUDE_BIN=/path/to/your/claude-wrapper
+export AGENT_COLLAB_HERMES_BIN=/path/to/your/hermes-wrapper
 ```
 
-`.env.example` 支持任意 OpenAI/Anthropic 兼容端点：官方 Anthropic、OpenRouter、自建代理、Hermes Portal 等。
-
-> 该模块在 v0.3 实装。在此之前，所有"Agent 发言"通过 CLI / MCP / WebUI 由人或外部 Agent 手动驱动。
+> **再说一遍**：runner 不读 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`。所有"对话额度"来自你 CLI 已经登录的账号。
 
 ---
 
@@ -183,7 +211,7 @@ npm run agent -- export
 
 可用 tools：
 
-`get_state` · `post_message` · `chair_directive` · `update_meeting` · `roundtable_turn` · `propose_motion` · `cast_vote` · `get_motion_chain` · `list_events` · `create_task` · `update_task` · `record_decision` · `update_handoff` · `export_handoff`
+`get_state` · `post_message` · `chair_directive` · `update_meeting` · `roundtable_turn` · `propose_motion` · `cast_vote` · `get_motion_chain` · `list_events` · `create_task` · `update_task` · `record_decision` · `update_handoff` · `export_handoff` · `wake_agent` · `set_auto_mode` · `get_runner_state`
 
 ---
 
@@ -214,7 +242,7 @@ npm run agent -- export
 - [x] **v0.2** 主席否决后自动 re-prompt 失败方（[issue #1](https://github.com/ruijiaang-lab/agent-collab/issues/1)）
 - [x] **v0.2** Docker 一键启动 + 启动文档（[docs/run.md](docs/run.md)）
 - [x] **v0.3** Agent 投票 + 事件溯源 + 决策链回放 + 三轨泳道 UI
-- [ ] **v0.4** 真 Agent runner（Claude / OpenAI 兼容端点，本地填 key 即可加入圆桌）
+- [x] **v0.4** 真 Agent runner：本地 CLI subprocess + 手动唤醒 + 自动模式闸（不读 API key）
 - [ ] **v0.5** 时间旅行 / 决策快照回放
 - [ ] **v1.0** 多会议并行 + 会议模板 + Cursor / Devin 接入
 

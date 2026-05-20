@@ -1,6 +1,9 @@
 const stateUrl = "/api/state";
 let state = null;
 let expandedMotionId = null;
+let inflight = new Set();
+let auto = { autoMode: false, autoMaxRounds: 10, autoRoundsRemaining: 0 };
+let agentConfigs = {};
 
 const $ = (id) => document.getElementById(id);
 
@@ -37,12 +40,31 @@ function timeLabel(iso) {
 }
 
 async function load() {
-  state = await api(stateUrl);
+  const [s, runner] = await Promise.all([api(stateUrl), api("/api/agents/inflight")]);
+  state = s;
+  inflight = new Set(runner.inflight || []);
+  auto = runner.auto || auto;
+  agentConfigs = runner.configs || {};
   render();
+}
+
+async function refreshInflight() {
+  try {
+    const runner = await api("/api/agents/inflight");
+    inflight = new Set(runner.inflight || []);
+    auto = runner.auto || auto;
+    agentConfigs = runner.configs || {};
+    // Lightweight: just repaint lanes + topbar; no full reload.
+    renderSwimlanes();
+    renderAutoControls();
+  } catch {
+    /* ignore — the SSE state event will trigger a full reload anyway */
+  }
 }
 
 function render() {
   $("updatedAt").textContent = `更新于 ${timeLabel(state.meta.updatedAt)}`;
+  renderAutoControls();
   renderChair();
   renderAgents();
   renderMeeting();
@@ -52,6 +74,18 @@ function render() {
   renderMotions();
   renderTasks();
   renderHandoff();
+}
+
+function renderAutoControls() {
+  const toggle = $("autoModeToggle");
+  const remaining = $("autoRemaining");
+  const maxRounds = $("autoMaxRounds");
+  if (!toggle || !remaining || !maxRounds) return;
+  toggle.checked = !!auto.autoMode;
+  remaining.textContent = `剩余 ${auto.autoRoundsRemaining || 0} 轮`;
+  if (document.activeElement !== maxRounds) {
+    maxRounds.value = auto.autoMaxRounds || 10;
+  }
 }
 
 function renderChair() {
@@ -196,13 +230,25 @@ function renderAgentLane(agentId, messages, meeting) {
   const name = agent?.name || agentId;
   const role = agent?.role || "";
   const isFloor = meeting.floor === agentId;
+  const isThinking = inflight.has(agentId);
+  const runnerCfg = agentConfigs[agentId];
+  const runnerEnabled = runnerCfg ? runnerCfg.enabled !== false : false;
+  const wakeTitle = runnerEnabled
+    ? `调用本地 ${runnerCfg.bin} 让 ${name} 当场发言（使用已登录账号）`
+    : `${name} 的本地 CLI 未启用`;
+  const wakeBtn = `
+    <button class="wake-btn ${isThinking ? "wake-btn-thinking" : ""}" data-wake="${escapeHtml(agentId)}"
+      ${isThinking || !runnerEnabled ? "disabled" : ""}
+      title="${escapeHtml(wakeTitle)}">${isThinking ? "思考中…" : "唤醒"}</button>`;
   return `
-    <section class="lane ${isFloor ? "lane-active" : ""}" data-agent="${escapeHtml(agentId)}" style="--lane-color:${color}">
+    <section class="lane ${isFloor ? "lane-active" : ""} ${isThinking ? "lane-thinking" : ""}" data-agent="${escapeHtml(agentId)}" style="--lane-color:${color}">
       <header class="lane-head">
         <span class="lane-dot" style="background:${color}"></span>
         <strong>${escapeHtml(name)}</strong>
         ${isFloor ? '<span class="lane-badge">on floor</span>' : ""}
+        ${isThinking ? '<span class="lane-badge lane-badge-thinking">⚡</span>' : ""}
         <span class="lane-count">${messages.length}</span>
+        ${wakeBtn}
       </header>
       <p class="lane-role">${escapeHtml(role)}</p>
       <div class="lane-body">
@@ -588,6 +634,52 @@ $("handoffForm").addEventListener("submit", async (event) => {
 
 $("refreshBtn").addEventListener("click", load);
 
+// Auto-mode toggle. Server returns the latest counters; the SSE `state` event
+// will also fire and trigger a full load(), so the UI converges on truth.
+$("autoModeToggle")?.addEventListener("change", async (event) => {
+  const enabled = event.target.checked;
+  const maxRounds = Number($("autoMaxRounds")?.value) || 10;
+  try {
+    await api("/api/meeting/auto", {
+      method: "PATCH",
+      body: { enabled, maxRounds }
+    });
+  } catch (error) {
+    event.target.checked = !enabled;
+    alert(`切换自动模式失败：${error.message}`);
+  }
+});
+
+$("autoMaxRounds")?.addEventListener("change", async () => {
+  if (!auto.autoMode) return;
+  const maxRounds = Number($("autoMaxRounds").value) || 10;
+  try {
+    await api("/api/meeting/auto", { method: "PATCH", body: { enabled: true, maxRounds } });
+  } catch (error) {
+    alert(`更新轮数失败：${error.message}`);
+  }
+});
+
+// Wake button — delegated on the swimlanes container. Sends POST and lets the
+// SSE inflight event flip the lane into thinking state.
+$("swimlanes")?.addEventListener("click", async (event) => {
+  const btn = event.target.closest("button[data-wake]");
+  if (!btn || btn.disabled) return;
+  const agentId = btn.dataset.wake;
+  btn.disabled = true;
+  btn.textContent = "唤醒中…";
+  try {
+    await api(`/api/agents/${agentId}/wake`, { method: "POST", body: {} });
+    // Optimistically mark as thinking until SSE/refresh confirms.
+    inflight.add(agentId);
+    renderSwimlanes();
+  } catch (error) {
+    alert(`唤醒 ${agentId} 失败：${error.message}`);
+    btn.disabled = false;
+    btn.textContent = "唤醒";
+  }
+});
+
 document.querySelectorAll(".view-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
     const view = btn.dataset.view;
@@ -599,6 +691,7 @@ document.querySelectorAll(".view-btn").forEach((btn) => {
 
 const events = new EventSource("/api/stream");
 events.addEventListener("state", load);
+events.addEventListener("inflight", refreshInflight);
 
 load().catch((error) => {
   document.body.innerHTML = `<pre>${escapeHtml(error.stack || error.message)}</pre>`;

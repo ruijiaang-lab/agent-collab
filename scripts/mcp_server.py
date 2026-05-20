@@ -183,5 +183,24 @@ def export_handoff() -> str:
     return api("/api/export")
 
 
+@mcp.tool()
+def wake_agent(agent_id: str) -> str:
+    """Wake an agent (claude-code / hermes / codex) by spawning its local CLI. Uses whatever the user is already logged into; never reads API keys. Returns 202 immediately; reply arrives async via state.json."""
+    return json.dumps(api(f"/api/agents/{agent_id}/wake", "POST", {}), ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def set_auto_mode(enabled: bool, max_rounds: int = 10) -> str:
+    """Toggle the meeting's auto mode. When enabled, floor changes to an agent auto-spawn its CLI until autoRoundsRemaining hits 0."""
+    payload = {"enabled": bool(enabled), "maxRounds": int(max_rounds)}
+    return json.dumps(api("/api/meeting/auto", "PATCH", payload), ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def get_runner_state() -> str:
+    """Read which agents are currently in-flight + auto-mode counters + which agent runners are enabled."""
+    return json.dumps(api("/api/agents/inflight"), ensure_ascii=False, indent=2)
+
+
 if __name__ == "__main__":
     mcp.run()
