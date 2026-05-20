@@ -481,3 +481,216 @@ pre {
     grid-template-rows: auto 420px auto;
   }
 }
+
+/* ===== Swimlane view ============================================= */
+
+.hidden {
+  display: none !important;
+}
+
+.view-toggle {
+  display: inline-flex;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.view-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.view-btn:hover {
+  color: var(--text);
+}
+
+.view-btn.active {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.swimlanes {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 320px;
+}
+
+.swimlane-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.meeting-chip {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.meeting-chip.floor {
+  color: var(--chair);
+  border-color: var(--chair);
+}
+
+.lanes-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  align-items: stretch;
+}
+
+.lane {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--lane-color, var(--accent));
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  min-height: 280px;
+  max-height: 560px;
+}
+
+.lane-active {
+  box-shadow: 0 0 0 1px var(--lane-color, var(--accent)) inset;
+}
+
+.lane-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.lane-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.lane-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--lane-color, var(--accent));
+  color: #0d1117;
+  font-weight: 600;
+}
+
+.lane-badge.authority {
+  background: var(--chair);
+}
+
+.lane-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.lane-role {
+  margin: 4px 0 8px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.lane-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.lane-empty {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 16px 4px;
+  text-align: center;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+}
+
+.lane-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.lane-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.round-chip {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--lane-color, var(--accent));
+  color: #0d1117;
+  font-weight: 700;
+}
+
+.stance-chip {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.lane-time {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.lane-card-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.lane-card-motion,
+.lane-card-chair-ruling {
+  border-left: 2px solid var(--amber);
+}
+
+.lane-card-reprompt {
+  border-left: 2px solid var(--red);
+}
+
+.lane-card-motion-vote {
+  border-left: 2px solid var(--green);
+}
+
+@media (max-width: 1200px) {
+  .lanes-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .lanes-grid {
+    grid-template-columns: 1fr;
+  }
+}

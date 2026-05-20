@@ -45,6 +45,7 @@ function render() {
   renderChair();
   renderAgents();
   renderMeeting();
+  renderSwimlanes();
   renderMessages();
   renderDirectives();
   renderMotions();
@@ -134,6 +135,112 @@ function renderMessages() {
       `;
     })
     .join("");
+}
+
+// Swimlane view: each participating Agent gets a vertical track of their
+// speeches/votes; the chair gets a track that mixes directives + rulings.
+// Designed to make "who said what in which round" legible at a glance.
+const SWIMLANE_AGENTS = ["codex", "claude-code", "hermes"];
+
+function stanceLabel(message) {
+  const type = message.type || "";
+  if (type === "motion") return "提案";
+  if (type === "motion-vote") return "投票";
+  if (type === "chair-ruling") return "裁决";
+  if (type === "chair-directive") return "指令";
+  if (type === "reprompt") return "Re-prompt";
+  if (type === "handoff") return "交接";
+  if (type === "decision") return "决策";
+  if (type === "turn") {
+    const stance = (message.content.match(/^\[(.+?)\]/) || [])[1];
+    return stance || "发言";
+  }
+  return type || "发言";
+}
+
+function renderSwimlanes() {
+  const container = $("swimlanes");
+  if (!container) return;
+  const meeting = state.meeting || {};
+  const buckets = {
+    codex: [],
+    "claude-code": [],
+    hermes: [],
+    chair: []
+  };
+  for (const message of state.messages) {
+    const agent = buckets[message.agent] ? message.agent : "chair";
+    buckets[agent].push(message);
+  }
+  const chairLane = renderChairLane(buckets.chair);
+  const agentLanes = SWIMLANE_AGENTS.map((agentId) =>
+    renderAgentLane(agentId, buckets[agentId] || [], meeting)
+  ).join("");
+  container.innerHTML = `
+    <div class="swimlane-header">
+      <span class="meeting-chip">Round ${escapeHtml(meeting.round || 1)}</span>
+      <span class="meeting-chip">phase · ${escapeHtml(meeting.phase || "open")}</span>
+      <span class="meeting-chip floor">floor · ${escapeHtml(agentName(meeting.floor || "chair"))}</span>
+    </div>
+    <div class="lanes-grid">
+      ${agentLanes}
+      ${chairLane}
+    </div>
+  `;
+}
+
+function renderAgentLane(agentId, messages, meeting) {
+  const agent = state.agents.find((item) => item.id === agentId);
+  const color = agentColor(agentId);
+  const name = agent?.name || agentId;
+  const role = agent?.role || "";
+  const isFloor = meeting.floor === agentId;
+  return `
+    <section class="lane ${isFloor ? "lane-active" : ""}" data-agent="${escapeHtml(agentId)}" style="--lane-color:${color}">
+      <header class="lane-head">
+        <span class="lane-dot" style="background:${color}"></span>
+        <strong>${escapeHtml(name)}</strong>
+        ${isFloor ? '<span class="lane-badge">on floor</span>' : ""}
+        <span class="lane-count">${messages.length}</span>
+      </header>
+      <p class="lane-role">${escapeHtml(role)}</p>
+      <div class="lane-body">
+        ${messages.length === 0 ? '<div class="lane-empty">尚未发言</div>' : messages.map((m) => renderLaneCard(m)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderChairLane(messages) {
+  return `
+    <section class="lane lane-chair" data-agent="chair" style="--lane-color:${state.chair.color}">
+      <header class="lane-head">
+        <span class="lane-dot" style="background:${state.chair.color}"></span>
+        <strong>${escapeHtml(state.chair.name)}</strong>
+        <span class="lane-badge authority">主席</span>
+        <span class="lane-count">${messages.length}</span>
+      </header>
+      <p class="lane-role">指令 · 裁决 · re-prompt 自动追加在这里</p>
+      <div class="lane-body">
+        ${messages.length === 0 ? '<div class="lane-empty">尚未发言</div>' : messages.map((m) => renderLaneCard(m)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderLaneCard(message) {
+  const round = message.round || state.meeting?.round || 1;
+  const stance = stanceLabel(message);
+  return `
+    <article class="lane-card lane-card-${escapeHtml(message.type)}">
+      <div class="lane-card-head">
+        <span class="round-chip">R${escapeHtml(round)}</span>
+        <span class="stance-chip">${escapeHtml(stance)}</span>
+        <span class="lane-time">${timeLabel(message.createdAt)}</span>
+      </div>
+      <div class="lane-card-body">${escapeHtml(message.content)}</div>
+    </article>
+  `;
 }
 
 function renderDirectives() {
@@ -356,6 +463,15 @@ $("handoffForm").addEventListener("submit", async (event) => {
 });
 
 $("refreshBtn").addEventListener("click", load);
+
+document.querySelectorAll(".view-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const view = btn.dataset.view;
+    document.querySelectorAll(".view-btn").forEach((b) => b.classList.toggle("active", b === btn));
+    $("swimlanes").classList.toggle("hidden", view !== "swimlane");
+    $("messages").classList.toggle("hidden", view !== "timeline");
+  });
+});
 
 const events = new EventSource("/api/stream");
 events.addEventListener("state", load);

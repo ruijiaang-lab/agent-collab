@@ -71,8 +71,13 @@
           <section class="panel discussion">
             <div class="panel-head">
               <h2>圆桌发言</h2>
+              <div class="view-toggle" role="tablist" aria-label="View mode">
+                <button type="button" class="view-btn active" data-view="swimlane" role="tab">泳道视图</button>
+                <button type="button" class="view-btn" data-view="timeline" role="tab">时间线</button>
+              </div>
             </div>
-            <div id="messages" class="messages"></div>
+            <div id="swimlanes" class="swimlanes" role="tabpanel"></div>
+            <div id="messages" class="messages hidden" role="tabpanel"></div>
             <form id="turnForm" class="composer">
               <div class="inline-fields turn-fields">
                 <select id="turnAgent">
