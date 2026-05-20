@@ -578,7 +578,9 @@ async function handleApi(req, res, url) {
     return json(res, 200, state.handoff);
   }
 
-  if (req.method === "GET" && url.pathname === "/api/events") {
+  // Server-sent events for WebUI live updates. Renamed from /api/events
+  // (which is now the append-only event log) to /api/stream in v0.3.
+  if (req.method === "GET" && (url.pathname === "/api/stream" || url.pathname === "/api/events/stream")) {
     res.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache",
@@ -588,6 +590,44 @@ async function handleApi(req, res, url) {
     res.write(`event: connected\ndata: ${JSON.stringify({ ok: true })}\n\n`);
     req.on("close", () => clients.delete(res));
     return;
+  }
+
+  // Append-only event log. Supports ?since=<isoTimestamp>, ?type=<eventType>,
+  // ?motionId=, ?actor=, ?limit=<n>. Designed for decision-chain replay and
+  // future time-travel debugging in the WebUI.
+  if (req.method === "GET" && url.pathname === "/api/events") {
+    const events = Array.isArray(state.events) ? state.events : [];
+    const since = url.searchParams.get("since");
+    const typeFilter = url.searchParams.get("type");
+    const motionIdFilter = url.searchParams.get("motionId");
+    const actorFilter = url.searchParams.get("actor");
+    const limit = Math.min(Number(url.searchParams.get("limit")) || 500, 2000);
+    let filtered = events;
+    if (since) filtered = filtered.filter((event) => event.createdAt > since);
+    if (typeFilter) filtered = filtered.filter((event) => event.type === typeFilter);
+    if (motionIdFilter) filtered = filtered.filter((event) => event.refs?.motionId === motionIdFilter);
+    if (actorFilter) filtered = filtered.filter((event) => event.actor === actorFilter);
+    const sliced = filtered.slice(-limit);
+    return json(res, 200, {
+      total: events.length,
+      filtered: filtered.length,
+      returned: sliced.length,
+      events: sliced
+    });
+  }
+
+  // Decision chain for a single motion — the canonical "how did we arrive
+  // here" view: proposal → votes → ruling → (optional) re-prompt → revisions.
+  const motionChainMatch = url.pathname.match(/^\/api\/motions\/([^/]+)\/chain$/);
+  if (req.method === "GET" && motionChainMatch) {
+    const motionId = motionChainMatch[1];
+    const motion = state.motions.find((item) => item.id === motionId);
+    if (!motion) return json(res, 404, { error: "motion not found" });
+    const events = Array.isArray(state.events) ? state.events : [];
+    const chain = events
+      .filter((event) => event.refs?.motionId === motionId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    return json(res, 200, { motion, chain });
   }
 
   return json(res, 404, { error: "not found" });

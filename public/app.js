@@ -357,7 +357,7 @@ $("handoffForm").addEventListener("submit", async (event) => {
 
 $("refreshBtn").addEventListener("click", load);
 
-const events = new EventSource("/api/events");
+const events = new EventSource("/api/stream");
 events.addEventListener("state", load);
 
 load().catch((error) => {
