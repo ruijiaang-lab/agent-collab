@@ -387,15 +387,64 @@ async function handleApi(req, res, url) {
       proposedBy: sanitizeText(body.proposedBy, "codex"),
       status: "proposed",
       ruling: "",
+      votes: [],
+      meetingId: state.meeting?.id || null,
+      round: state.meeting?.round || 1,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
     if (!motion.title || !motion.rationale) return json(res, 400, { error: "title and rationale are required" });
     state.motions.unshift(motion);
     addMessage({ agent: motion.proposedBy, type: "motion", content: `提出提案：${motion.title}\n${motion.rationale}` });
+    recordEvent({
+      type: "motion.proposed",
+      actor: motion.proposedBy,
+      payload: { title: motion.title, rationale: motion.rationale },
+      refs: { motionId: motion.id }
+    });
     await persist();
     broadcast();
     return json(res, 201, motion);
+  }
+
+  // Agent voting on a motion. Agents express position (support/oppose/abstain)
+  // + short reason, before the chair rules. Multiple votes from the same agent
+  // overwrite the previous one (last-write-wins on agent identity).
+  const motionVoteMatch = url.pathname.match(/^\/api\/motions\/([^/]+)\/votes$/);
+  if (req.method === "POST" && motionVoteMatch) {
+    const body = await readJson(req);
+    const motion = state.motions.find((item) => item.id === motionVoteMatch[1]);
+    if (!motion) return json(res, 404, { error: "motion not found" });
+    const voter = sanitizeText(body.agent);
+    const position = sanitizeText(body.position);
+    if (!voter || !["support", "oppose", "abstain"].includes(position)) {
+      return json(res, 400, { error: "agent and position (support|oppose|abstain) are required" });
+    }
+    if (!Array.isArray(motion.votes)) motion.votes = [];
+    motion.votes = motion.votes.filter((vote) => vote.agent !== voter);
+    const vote = {
+      agent: voter,
+      position,
+      reason: sanitizeText(body.reason),
+      round: state.meeting?.round || 1,
+      createdAt: new Date().toISOString()
+    };
+    motion.votes.push(vote);
+    motion.updatedAt = vote.createdAt;
+    addMessage({
+      agent: voter,
+      type: "motion-vote",
+      content: `对提案【${motion.title}】投${position === "support" ? "赞成" : position === "oppose" ? "反对" : "弃权"}票${vote.reason ? `：${vote.reason}` : ""}`
+    });
+    recordEvent({
+      type: "motion.voted",
+      actor: voter,
+      payload: { position, reason: vote.reason },
+      refs: { motionId: motion.id }
+    });
+    await persist();
+    broadcast();
+    return json(res, 201, vote);
   }
 
   const motionMatch = url.pathname.match(/^\/api\/motions\/([^/]+)$/);
@@ -408,6 +457,14 @@ async function handleApi(req, res, url) {
     if (body.ruling !== undefined) motion.ruling = sanitizeText(body.ruling, motion.ruling);
     motion.updatedAt = new Date().toISOString();
     addMessage({ agent: "chair", type: "chair-ruling", content: `裁决提案：${motion.title}\n状态：${motion.status}\n${motion.ruling}` });
+    if (motion.status !== previousStatus) {
+      recordEvent({
+        type: "motion.ruled",
+        actor: "chair",
+        payload: { from: previousStatus, to: motion.status, ruling: motion.ruling },
+        refs: { motionId: motion.id }
+      });
+    }
 
     // Auto re-prompt on rejection: closes issue #1.
     // When chair rejects a motion, push a high-priority directive carrying
@@ -426,6 +483,7 @@ async function handleApi(req, res, url) {
           : `主席否决该提案。请 ${agentDisplayName(motion.proposedBy)} 修订后重新提案。`,
         priority: "high",
         status: "active",
+        meetingId: state.meeting?.id || null,
         createdAt: new Date().toISOString(),
         sourceMotionId: motion.id
       };
@@ -441,6 +499,12 @@ async function handleApi(req, res, url) {
         agent: "system",
         type: "reprompt",
         content: `已自动 re-prompt ${agentDisplayName(motion.proposedBy)}（round ${state.meeting.round}）。否决理由已写入高优 directive。`
+      });
+      recordEvent({
+        type: "motion.reprompted",
+        actor: "system",
+        payload: { proposer: motion.proposedBy, newRound: state.meeting.round },
+        refs: { motionId: motion.id, directiveId: directive.id }
       });
     }
 
