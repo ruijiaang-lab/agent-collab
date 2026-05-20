@@ -99,6 +99,19 @@
 
 ---
 
+## v0.3：会议机制扩展 + 决策可回放
+
+| 能力 | 说明 | 入口 |
+|---|---|---|
+| **Agent 投票** | 提案被主席裁决前，Agent 可表态 support / oppose / abstain，主席能看见票型再下判断 | `POST /api/motions/:id/votes` · WebUI 提案卡片内 |
+| **事件溯源** | 所有 motion.proposed / voted / ruled / reprompted 落到 append-only `events[]`，可按 type/motionId/actor/since 过滤 | `GET /api/events` |
+| **决策链回放** | 单个提案的 proposal → votes → ruling → re-prompt 全链路，按时间升序 | `GET /api/motions/:id/chain` · WebUI 决策链卡片 |
+| **三轨泳道 UI** | Codex / Claude Code / Hermes 各一条轨 + 主席轨；每张发言卡带 round chip + stance chip；当前发言权高亮 | WebUI 顶部「泳道视图」 |
+
+测试覆盖：27 条 assertion（[`scripts/test-reprompt.mjs`](scripts/test-reprompt.mjs) × 11 + [`scripts/test-events.mjs`](scripts/test-events.mjs) × 16），`npm test` 一并跑。
+
+---
+
 ## 快速开始
 
 ```bash
@@ -170,7 +183,7 @@ npm run agent -- export
 
 可用 tools：
 
-`get_state` · `post_message` · `chair_directive` · `update_meeting` · `roundtable_turn` · `propose_motion` · `create_task` · `update_task` · `record_decision` · `update_handoff` · `export_handoff`
+`get_state` · `post_message` · `chair_directive` · `update_meeting` · `roundtable_turn` · `propose_motion` · `cast_vote` · `get_motion_chain` · `list_events` · `create_task` · `update_task` · `record_decision` · `update_handoff` · `export_handoff`
 
 ---
 
@@ -200,8 +213,9 @@ npm run agent -- export
 - [x] **v0.1** 主席台 WebUI + state machine + MCP/CLI 三通道
 - [x] **v0.2** 主席否决后自动 re-prompt 失败方（[issue #1](https://github.com/ruijiaang-lab/agent-collab/issues/1)）
 - [x] **v0.2** Docker 一键启动 + 启动文档（[docs/run.md](docs/run.md)）
-- [ ] **v0.3** 真 Agent runner（Claude / OpenAI 兼容端点，本地填 key 即可加入圆桌）
-- [ ] **v0.4** 决策回放 / 时间旅行
+- [x] **v0.3** Agent 投票 + 事件溯源 + 决策链回放 + 三轨泳道 UI
+- [ ] **v0.4** 真 Agent runner（Claude / OpenAI 兼容端点，本地填 key 即可加入圆桌）
+- [ ] **v0.5** 时间旅行 / 决策快照回放
 - [ ] **v1.0** 多会议并行 + 会议模板 + Cursor / Devin 接入
 
 ---

@@ -89,6 +89,32 @@ def propose_motion(title: str, rationale: str, proposed_by: str) -> str:
 
 
 @mcp.tool()
+def cast_vote(motion_id: str, agent: str, position: str, reason: str = "") -> str:
+    """Cast a vote on a motion before the chair rules. Position must be one of support / oppose / abstain. Re-voting from the same agent overwrites the previous vote."""
+    payload = {"agent": agent, "position": position, "reason": reason}
+    return json.dumps(api(f"/api/motions/{motion_id}/votes", "POST", payload), ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def get_motion_chain(motion_id: str) -> str:
+    """Return the decision chain for a motion: proposal → votes → ruling → re-prompt, sorted ascending by time."""
+    return json.dumps(api(f"/api/motions/{motion_id}/chain", "GET"), ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def list_events(since: str = "", event_type: str = "", motion_id: str = "", actor: str = "", limit: int = 100) -> str:
+    """Read the append-only event log. Filter with since (ISO timestamp), event_type, motion_id, actor; cap with limit."""
+    params = []
+    if since: params.append(f"since={since}")
+    if event_type: params.append(f"type={event_type}")
+    if motion_id: params.append(f"motionId={motion_id}")
+    if actor: params.append(f"actor={actor}")
+    if limit: params.append(f"limit={limit}")
+    query = "?" + "&".join(params) if params else ""
+    return json.dumps(api(f"/api/events{query}", "GET"), ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
 def create_task(
     title: str,
     description: str = "",
