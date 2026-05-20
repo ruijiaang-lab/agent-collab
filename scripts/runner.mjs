@@ -74,7 +74,7 @@ export const agentConfigs = {
     args: ["exec"],
     inputVia: "stdin",
     parseWrapper: "raw",
-    timeoutMs: 90_000,
+    timeoutMs: 180_000,
     // Disabled until the user installs Codex CLI. UI will surface this.
     enabled: false
   }
