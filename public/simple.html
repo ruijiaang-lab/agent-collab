@@ -8,11 +8,18 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="title">Agent Collab</div>
+    <div class="topbar-left">
+      <div class="title">Agent Collab</div>
+      <nav class="topbar-nav">
+        <a href="/tasks" class="nav-link">任务</a>
+        <a href="/simple" class="nav-link active">极简</a>
+        <a href="/chair" class="nav-link">高级</a>
+        <a href="/settings" class="nav-link">设置</a>
+      </nav>
+    </div>
     <div class="actions">
       <button id="newBtn" class="link-btn" hidden>＋ 新讨论</button>
       <button id="stopBtn" class="link-btn" hidden>■ 中止</button>
-      <a class="link-btn" href="/chair" title="给开发者用的高级模式">高级模式 →</a>
     </div>
   </header>
 

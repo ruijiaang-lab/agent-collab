@@ -9,9 +9,14 @@
   <body>
     <div class="app">
       <header class="topbar">
-        <div>
+        <div class="topbar-left">
           <h1>圆桌会议控制台</h1>
-          <p>你是主席和最终裁决者；Codex、Claude Code、Hermes 作为参会 agent 提供建议、质询和执行。</p>
+          <nav class="topbar-nav">
+            <a href="/tasks" class="nav-link">任务</a>
+            <a href="/simple" class="nav-link">极简</a>
+            <a href="/chair" class="nav-link active">高级</a>
+            <a href="/settings" class="nav-link">设置</a>
+          </nav>
         </div>
         <div class="top-actions">
           <div class="auto-mode-toggle" title="开启后，floor 切到 agent 会自动唤醒它直到剩余轮数为 0">
@@ -23,7 +28,7 @@
             <input id="autoMaxRounds" type="number" min="1" max="50" value="10" title="自动模式单次最多轮数" />
           </div>
           <div class="conclude-panel">
-            <button id="concludeToggle" class="button-primary" title="挑一位 agent 综合本轮讨论，输出结论 / 行动项 / 周报">生成结论</button>
+            <button id="concludeToggle" class="button-primary" title="挑一位 agent 综合本轮讨论">生成结论</button>
             <form id="concludeForm" class="conclude-form hidden">
               <select id="concludeAgent" title="哪位 agent 来综合"></select>
               <select id="concludeFormat" title="输出格式"></select>
@@ -33,7 +38,6 @@
             </form>
           </div>
           <button id="refreshBtn" title="刷新状态">刷新</button>
-          <a class="button" href="/api/export" target="_blank" rel="noreferrer">导出会议纪要</a>
         </div>
       </header>
 
@@ -125,42 +129,50 @@
           <section class="panel chair-command">
             <div class="panel-head">
               <h2>主席指令</h2>
+              <button type="button" class="collapse-toggle" data-target="directiveBody" title="展开/收起">▼</button>
             </div>
-            <form id="directiveForm" class="directive-form">
-              <input id="directiveTitle" placeholder="指令标题" />
-              <textarea id="directiveContent" rows="3" placeholder="最高指令、约束、禁止事项或验收标准"></textarea>
-              <select id="directivePriority">
-                <option value="highest">最高</option>
-                <option value="high">高</option>
-                <option value="normal">普通</option>
-              </select>
-              <button type="submit">下达主席指令</button>
-            </form>
-            <div id="directives" class="directives"></div>
+            <div id="directiveBody">
+              <form id="directiveForm" class="directive-form">
+                <input id="directiveTitle" placeholder="指令标题" />
+                <textarea id="directiveContent" rows="2" placeholder="约束、禁止事项或验收标准"></textarea>
+                <div class="inline-fields">
+                  <select id="directivePriority">
+                    <option value="highest">最高</option>
+                    <option value="high">高</option>
+                    <option value="normal">普通</option>
+                  </select>
+                  <button type="submit">下达</button>
+                </div>
+              </form>
+              <div id="directives" class="directives"></div>
+            </div>
           </section>
 
           <section class="panel">
             <div class="panel-head">
               <h2>提案与裁决</h2>
+              <button type="button" class="collapse-toggle" data-target="motionBody" title="展开/收起">▼</button>
             </div>
-            <form id="motionForm" class="motion-form">
-              <input id="motionTitle" placeholder="提案标题" />
-              <textarea id="motionRationale" rows="2" placeholder="提案理由"></textarea>
-              <select id="motionProposedBy">
-                <option value="codex">Codex</option>
-                <option value="claude-code">Claude Code</option>
-                <option value="hermes">Hermes</option>
-                <option value="chair">主席</option>
-              </select>
-              <button type="submit">提交提案</button>
-            </form>
-            <div id="motions" class="motions"></div>
+            <div id="motionBody">
+              <form id="motionForm" class="motion-form">
+                <input id="motionTitle" placeholder="提案标题" />
+                <textarea id="motionRationale" rows="2" placeholder="提案理由"></textarea>
+                <div class="inline-fields">
+                  <select id="motionProposedBy">
+                    <option value="codex">Codex</option>
+                    <option value="claude-code">Claude Code</option>
+                    <option value="hermes">Hermes</option>
+                    <option value="chair">主席</option>
+                  </select>
+                  <button type="submit">提交</button>
+                </div>
+              </form>
+              <div id="motions" class="motions"></div>
+            </div>
           </section>
 
-          <section class="panel">
-            <div class="panel-head">
-              <h2>行动项</h2>
-            </div>
+          <details class="panel-details">
+            <summary class="panel-head"><h2>行动项</h2></summary>
             <form id="taskForm" class="task-form">
               <input id="taskTitle" placeholder="行动项标题" />
               <textarea id="taskDescription" rows="2" placeholder="执行说明"></textarea>
@@ -177,15 +189,13 @@
                   <option value="low">低</option>
                 </select>
               </div>
-              <button type="submit">创建行动项</button>
+              <button type="submit">创建</button>
             </form>
             <div id="tasks" class="tasks"></div>
-          </section>
+          </details>
 
-          <section class="panel">
-            <div class="panel-head">
-              <h2>交接</h2>
-            </div>
+          <details class="panel-details">
+            <summary class="panel-head"><h2>交接</h2></summary>
             <form id="handoffForm" class="handoff-form">
               <select id="handoffLead">
                 <option value="codex">Codex</option>
@@ -194,9 +204,9 @@
               </select>
               <textarea id="handoffNext" rows="2" placeholder="下一步动作"></textarea>
               <textarea id="handoffBlockers" rows="2" placeholder="阻塞项"></textarea>
-              <button type="submit">更新交接</button>
+              <button type="submit">更新</button>
             </form>
-          </section>
+          </details>
         </section>
       </main>
     </div>

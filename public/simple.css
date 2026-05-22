@@ -36,6 +36,15 @@ button, textarea, input { font: inherit; color: inherit; }
   padding: 14px 24px; border-bottom: 1px solid var(--border);
   background: var(--bg);
 }
+.topbar-left { display: flex; align-items: center; gap: 16px; }
+.topbar-nav { display: flex; gap: 4px; }
+.nav-link {
+  padding: 4px 10px; font-size: 13px; border-radius: 6px;
+  color: var(--muted); text-decoration: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.nav-link:hover { color: var(--ink); background: var(--surface); }
+.nav-link.active { color: var(--ink); background: var(--surface); font-weight: 600; }
 .title { font-weight: 600; font-size: 15px; letter-spacing: 0.3px; }
 .actions { display: flex; gap: 4px; align-items: center; }
 .link-btn {

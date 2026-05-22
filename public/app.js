@@ -844,6 +844,17 @@ $("conclusions")?.addEventListener("click", async (event) => {
   }
 });
 
+// Collapse toggles for sidebar panels.
+document.addEventListener("click", (event) => {
+  const btn = event.target.closest(".collapse-toggle");
+  if (!btn) return;
+  const target = document.getElementById(btn.dataset.target);
+  if (!target) return;
+  const collapsed = target.style.display === "none";
+  target.style.display = collapsed ? "" : "none";
+  btn.classList.toggle("collapsed", !collapsed);
+});
+
 const events = new EventSource("/api/stream");
 events.addEventListener("state", load);
 events.addEventListener("inflight", refreshInflight);
