@@ -5,6 +5,8 @@ node_modules/
 # Runtime state — meeting data is local-only, regenerated on first run
 data/state.json
 data/*.bak
+data/config.yaml
+data/tasks/
 
 # Local env
 .env

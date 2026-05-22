@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>圆桌主席 · 任务面板</title>
+  <link rel="stylesheet" href="/tasks.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/tasks">圆桌主席</a>
+    <nav class="nav">
+      <a href="/tasks" class="nav-link active" data-page="list">任务</a>
+      <a href="/settings" class="nav-link">设置</a>
+      <a href="/simple" class="nav-link">极简模式</a>
+    </nav>
+  </header>
+
+  <!-- Page 1: task list -->
+  <main id="pageList" class="page active">
+    <div class="page-header">
+      <h1>任务面板</h1>
+      <button id="newTaskBtn" class="btn primary">＋ 新任务</button>
+    </div>
+    <div id="filters" class="filters">
+      <button class="filter active" data-status="">全部</button>
+      <button class="filter" data-status="pending">待处理</button>
+      <button class="filter" data-status="discussing">讨论中</button>
+      <button class="filter" data-status="executing">执行中</button>
+      <button class="filter" data-status="completed">已完成</button>
+      <button class="filter" data-status="review">需审核</button>
+      <button class="filter" data-status="failed">失败</button>
+    </div>
+    <div id="taskList" class="task-list">
+      <div class="empty">加载中…</div>
+    </div>
+  </main>
+
+  <!-- Page 2: new task form -->
+  <main id="pageNew" class="page">
+    <div class="page-header">
+      <button class="btn ghost" id="backFromNew">← 返回</button>
+      <h1>新建任务</h1>
+    </div>
+    <form id="newTaskForm" class="form">
+      <label>
+        <span>你想让 AI 帮你做什么？</span>
+        <textarea id="newBrief" rows="4" placeholder="描述你的需求，越具体越好…"></textarea>
+      </label>
+      <label>
+        <span>模式</span>
+        <div class="mode-select">
+          <button type="button" class="mode-btn selected" data-mode="roundtable">
+            <strong>圆桌讨论</strong>
+            <small>AI 轮流发言，适合开放性问题</small>
+          </button>
+          <button type="button" class="mode-btn" data-mode="decompose">
+            <strong>拆解执行</strong>
+            <small>Hermes 拆解任务，分发给各 AI 执行</small>
+          </button>
+        </div>
+      </label>
+      <label>
+        <span>标题（可选，留空自动生成）</span>
+        <input id="newTitle" type="text" placeholder="任务标题" />
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="btn primary" id="submitNewTask">开始执行</button>
+      </div>
+      <p id="newTaskError" class="error" hidden></p>
+    </form>
+  </main>
+
+  <!-- Page 3: task detail -->
+  <main id="pageDetail" class="page">
+    <div class="page-header">
+      <button class="btn ghost" id="backFromDetail">← 返回</button>
+      <h1 id="detailTitle">任务详情</h1>
+      <span id="detailStatus" class="status-badge"></span>
+    </div>
+
+    <!-- Brief / Decompose result -->
+    <section id="detailBrief" class="section">
+      <h2>任务描述</h2>
+      <div id="briefContent" class="content-box"></div>
+    </section>
+
+    <!-- Agent turns / outputs -->
+    <section id="detailOutputs" class="section" hidden>
+      <h2>AI 产出</h2>
+      <div id="outputsContainer"></div>
+    </section>
+
+    <!-- Synthesis / Conclusion -->
+    <section id="detailSynthesis" class="section" hidden>
+      <h2 id="synthesisTitle">结论</h2>
+      <div id="synthesisContent" class="content-box highlight"></div>
+      <div class="synthesis-actions">
+        <button id="copySynthesis" class="btn ghost">复制</button>
+        <button id="downloadSynthesis" class="btn ghost">下载 Markdown</button>
+      </div>
+    </section>
+
+    <!-- Review actions -->
+    <section id="detailReview" class="section" hidden>
+      <div class="review-actions">
+        <button id="approveBtn" class="btn primary">通过</button>
+        <button id="rejectBtn" class="btn danger">打回</button>
+      </div>
+    </section>
+
+    <!-- Follow-up: continue or ask -->
+    <section id="detailFollowup" class="section">
+      <h2>继续</h2>
+      <div class="followup-modes">
+        <button class="followup-btn selected" data-action="continue">继续讨论</button>
+        <button class="followup-btn" data-action="ask">单独提问</button>
+      </div>
+      <div id="followupAskAgent" class="ask-agent-select" hidden>
+        <label>问谁：</label>
+        <select id="askAgentSelect">
+          <option value="hermes">Hermes</option>
+          <option value="claude-code">Claude Code</option>
+          <option value="codex">Codex</option>
+        </select>
+      </div>
+      <form id="followupForm" class="followup-form">
+        <textarea id="followupInput" rows="2" placeholder="追问或补充说明…"></textarea>
+        <button type="submit" class="btn primary" id="followupSubmit">发送</button>
+      </form>
+      <p id="followupStatus" class="muted"></p>
+    </section>
+
+    <!-- Log -->
+    <details class="section log-section">
+      <summary>执行日志</summary>
+      <pre id="detailLog" class="log-box"></pre>
+    </details>
+  </main>
+
+  <script src="/tasks.js"></script>
+</body>
+</html>

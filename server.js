@@ -14,6 +14,16 @@ import {
   concludeMeeting,
   getConclusionFormats
 } from "./scripts/runner.mjs";
+import { init as initConfig, getConfig, updateConfig as saveConfig, serializeYaml } from "./scripts/config.mjs";
+import * as taskStore from "./scripts/tasks.mjs";
+import {
+  decompose,
+  dispatch,
+  synthesize,
+  runRoundtable,
+  continueDiscussion,
+  askAgent
+} from "./scripts/pipeline.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 5057);
@@ -409,6 +419,10 @@ initRunner({
   broadcast,
   id
 });
+
+// Pipeline: config + task storage
+initConfig();
+taskStore.init();
 
 function exportMarkdown() {
   const agentName = (agentId) => {
@@ -918,6 +932,131 @@ async function handleApi(req, res, url) {
     return json(res, 200, { motion, chain });
   }
 
+  // =========================================================================
+  // Pipeline: task management + settings + providers
+  // =========================================================================
+
+  // --- Settings (config.yaml) ---
+  if (req.method === "GET" && url.pathname === "/api/settings") {
+    return json(res, 200, { config: getConfig() });
+  }
+  if (req.method === "PUT" && url.pathname === "/api/settings") {
+    const body = await readJson(req);
+    const updated = saveConfig(body);
+    return json(res, 200, { config: updated });
+  }
+
+  // --- Providers ---
+  if (req.method === "GET" && url.pathname === "/api/providers") {
+    const cfg = getConfig();
+    const providers = {};
+    for (const [id, p] of Object.entries(cfg.providers || {})) {
+      const cliConfig = agentConfigs[id];
+      providers[id] = {
+        mode: p.mode,
+        hasApiKey: !!(p.api_key),
+        hasBaseUrl: !!(p.base_url),
+        model: p.model || "(auto)",
+        cliAvailable: !!(cliConfig && cliConfig.enabled !== false),
+        enabled: p.enabled !== false
+      };
+    }
+    return json(res, 200, { providers });
+  }
+
+  // --- Pipeline Tasks CRUD ---
+  if (req.method === "POST" && url.pathname === "/api/v2/tasks") {
+    const body = await readJson(req);
+    if (!body.brief && !body.title) return json(res, 400, { error: "brief or title is required" });
+    const task = taskStore.createTask({
+      title: body.title,
+      brief: body.brief,
+      mode: body.mode || "roundtable",
+      priority: body.priority || "normal",
+      assignedAgents: body.agents || []
+    });
+    return json(res, 201, task);
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/v2/tasks") {
+    const status = url.searchParams.get("status") || undefined;
+    const limit = Number(url.searchParams.get("limit") || 50);
+    const tasks = taskStore.listTasks({ status, limit });
+    return json(res, 200, { tasks });
+  }
+
+  const v2TaskMatch = url.pathname.match(/^\/api\/v2\/tasks\/([^/]+)$/);
+  if (v2TaskMatch) {
+    const taskId = v2TaskMatch[1];
+    if (req.method === "GET") {
+      const task = taskStore.getTask(taskId);
+      if (!task) return json(res, 404, { error: "task not found" });
+      return json(res, 200, task);
+    }
+    if (req.method === "DELETE") {
+      const ok = taskStore.deleteTask(taskId);
+      return json(res, ok ? 200 : 404, { ok });
+    }
+  }
+
+  // --- Pipeline actions ---
+  const v2DecomposeMatch = url.pathname.match(/^\/api\/v2\/tasks\/([^/]+)\/decompose$/);
+  if (req.method === "POST" && v2DecomposeMatch) {
+    const result = await decompose(v2DecomposeMatch[1]);
+    return json(res, result.ok ? 200 : 500, result);
+  }
+
+  const v2DispatchMatch = url.pathname.match(/^\/api\/v2\/tasks\/([^/]+)\/dispatch$/);
+  if (req.method === "POST" && v2DispatchMatch) {
+    const result = await dispatch(v2DispatchMatch[1]);
+    return json(res, result.ok ? 200 : 500, result);
+  }
+
+  const v2SynthesizeMatch = url.pathname.match(/^\/api\/v2\/tasks\/([^/]+)\/synthesize$/);
+  if (req.method === "POST" && v2SynthesizeMatch) {
+    const result = await synthesize(v2SynthesizeMatch[1]);
+    return json(res, result.ok ? 200 : 500, result);
+  }
+
+  const v2RunMatch = url.pathname.match(/^\/api\/v2\/tasks\/([^/]+)\/run$/);
+  if (req.method === "POST" && v2RunMatch) {
+    const task = taskStore.getTask(v2RunMatch[1]);
+    if (!task) return json(res, 404, { error: "task not found" });
+    let result;
+    if (task.mode === "decompose") {
+      result = await decompose(v2RunMatch[1]);
+      if (result.ok) result = await dispatch(v2RunMatch[1]);
+    } else {
+      result = await runRoundtable(v2RunMatch[1]);
+    }
+    return json(res, result.ok ? 200 : 500, result);
+  }
+
+  const v2ContinueMatch = url.pathname.match(/^\/api\/v2\/tasks\/([^/]+)\/continue$/);
+  if (req.method === "POST" && v2ContinueMatch) {
+    const body = await readJson(req);
+    if (!body.brief) return json(res, 400, { error: "brief is required" });
+    const result = await continueDiscussion(v2ContinueMatch[1], body.brief);
+    return json(res, result.ok ? 200 : 500, result);
+  }
+
+  const v2AskMatch = url.pathname.match(/^\/api\/v2\/tasks\/([^/]+)\/ask\/([^/]+)$/);
+  if (req.method === "POST" && v2AskMatch) {
+    const body = await readJson(req);
+    if (!body.question) return json(res, 400, { error: "question is required" });
+    const result = await askAgent(v2AskMatch[1], v2AskMatch[2], body.question);
+    return json(res, result.ok ? 200 : 500, result);
+  }
+
+  const v2ReviewMatch = url.pathname.match(/^\/api\/v2\/tasks\/([^/]+)\/review$/);
+  if (req.method === "POST" && v2ReviewMatch) {
+    const body = await readJson(req);
+    const status = body.status === "approved" ? "completed" : "pending";
+    taskStore.updateTask(v2ReviewMatch[1], { reviewStatus: body.status, status });
+    taskStore.appendLog(v2ReviewMatch[1], "review", body.status);
+    return json(res, 200, { ok: true });
+  }
+
   return json(res, 404, { error: "not found" });
 }
 
@@ -927,7 +1066,9 @@ async function serveStatic(req, res, url) {
   const aliases = {
     "/": "/simple.html",
     "/simple": "/simple.html",
-    "/chair": "/index.html"
+    "/chair": "/index.html",
+    "/tasks": "/tasks.html",
+    "/settings": "/settings.html"
   };
   const requested = aliases[url.pathname] || decodeURIComponent(url.pathname);
   const filePath = path.normalize(path.join(PUBLIC_DIR, requested));

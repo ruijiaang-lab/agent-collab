@@ -12,6 +12,7 @@ Requires Node ≥ 20. Zero dependencies — `npm install` is not needed.
 git clone https://github.com/ruijiaang-lab/agent-collab.git
 cd agent-collab
 npm start
+# 任务面板：http://127.0.0.1:5057/tasks
 # 极简模式：http://127.0.0.1:5057/simple
 # 高级模式：http://127.0.0.1:5057/chair
 ```

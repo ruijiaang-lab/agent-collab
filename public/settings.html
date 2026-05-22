@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>圆桌主席 · 设置</title>
+  <link rel="stylesheet" href="/tasks.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/tasks">圆桌主席</a>
+    <nav class="nav">
+      <a href="/tasks" class="nav-link">任务</a>
+      <a href="/settings" class="nav-link active">设置</a>
+      <a href="/simple" class="nav-link">极简模式</a>
+    </nav>
+  </header>
+
+  <main class="page active">
+    <div class="page-header">
+      <h1>设置</h1>
+    </div>
+
+    <!-- Providers -->
+    <section class="section">
+      <h2>AI Provider 配置</h2>
+      <p class="muted" style="margin-bottom:16px">每个 AI 可以用 CLI 模式（复用本地登录）或 API 模式（填入端点和密钥）。密钥存在本地 .env 文件中，不会上传。</p>
+      <div id="providerList" class="provider-list"></div>
+    </section>
+
+    <!-- Defaults -->
+    <section class="section">
+      <h2>默认行为</h2>
+      <div class="settings-grid">
+        <label class="setting-item">
+          <span>合成后需审核</span>
+          <small>开启后任务完成后需手动"通过"</small>
+          <input type="checkbox" id="optReview" />
+        </label>
+        <label class="setting-item">
+          <span>自动合成</span>
+          <small>分发执行完自动触发 Hermes 合成</small>
+          <input type="checkbox" id="optAutoSynthesize" />
+        </label>
+        <label class="setting-item">
+          <span>最大讨论轮次</span>
+          <small>圆桌模式下 AI 最多讨论几轮</small>
+          <input type="number" id="optMaxRounds" min="1" max="10" value="3" />
+        </label>
+      </div>
+    </section>
+
+    <div class="form-actions">
+      <button id="saveSettings" class="btn primary">保存设置</button>
+      <span id="saveStatus" class="muted"></span>
+    </div>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    async function loadSettings() {
+      try {
+        const [settingsResp, providersResp] = await Promise.all([
+          fetch("/api/settings").then(r => r.json()),
+          fetch("/api/providers").then(r => r.json())
+        ]);
+        const cfg = settingsResp.config || {};
+        renderProviders(providersResp.providers || {}, cfg.providers || {});
+        $("optReview").checked = !!cfg.defaults?.review_required;
+        $("optAutoSynthesize").checked = cfg.defaults?.auto_synthesize !== false;
+        $("optMaxRounds").value = cfg.defaults?.max_rounds || 3;
+      } catch (err) {
+        document.querySelector(".page").innerHTML = `<div class="empty">加载失败：${err.message}</div>`;
+      }
+    }
+
+    function renderProviders(status, config) {
+      const root = $("providerList");
+      const agents = [
+        { id: "hermes", name: "Hermes", desc: "长期记忆 / 任务规划 / 合成" },
+        { id: "claude_code", name: "Claude Code", desc: "方案 / 创意 / 代码实现" },
+        { id: "codex", name: "Codex", desc: "工程 / 测试 / 自动化" }
+      ];
+      root.innerHTML = agents.map(a => {
+        const s = status[a.id] || {};
+        const c = config[a.id] || {};
+        const mode = c.mode || "cli";
+        return `
+          <div class="provider-card" data-agent="${a.id}">
+            <div class="provider-header">
+              <strong>${a.name}</strong>
+              <span class="muted">${a.desc}</span>
+            </div>
+            <div class="provider-mode">
+              <label><input type="radio" name="mode-${a.id}" value="cli" ${mode === "cli" ? "checked" : ""}> CLI 模式</label>
+              <label><input type="radio" name="mode-${a.id}" value="api" ${mode === "api" ? "checked" : ""}> API 模式</label>
+            </div>
+            <div class="provider-status">
+              ${s.cliAvailable ? '<span class="tag ok">CLI 可用</span>' : '<span class="tag warn">CLI 不可用</span>'}
+              ${s.hasApiKey ? '<span class="tag ok">已配 API Key</span>' : '<span class="tag muted">未配 API Key</span>'}
+              <span class="tag muted">模型：${s.model || "(自动)"}</span>
+            </div>
+            <div class="provider-api-fields" ${mode === "cli" ? "hidden" : ""}>
+              <label>Base URL <input type="text" class="input-sm" data-field="base_url" value="${c.base_url || ""}" placeholder="https://..." /></label>
+              <label>API Key <input type="password" class="input-sm" data-field="api_key" value="${c.api_key || ""}" placeholder="sk-..." /></label>
+              <label>Model <input type="text" class="input-sm" data-field="model" value="${c.model || ""}" placeholder="留空自动选择" /></label>
+            </div>
+          </div>`;
+      }).join("");
+
+      // Toggle API fields visibility
+      root.querySelectorAll('input[type="radio"]').forEach(radio => {
+        radio.addEventListener("change", (e) => {
+          const card = e.target.closest(".provider-card");
+          const apiFields = card.querySelector(".provider-api-fields");
+          apiFields.hidden = e.target.value !== "api";
+        });
+      });
+    }
+
+    $("saveSettings").addEventListener("click", async () => {
+      const providers = {};
+      document.querySelectorAll(".provider-card").forEach(card => {
+        const agent = card.dataset.agent;
+        const mode = card.querySelector(`input[name="mode-${agent}"]:checked`)?.value || "cli";
+        const fields = { mode };
+        card.querySelectorAll(".provider-api-fields input").forEach(input => {
+          fields[input.dataset.field] = input.value;
+        });
+        providers[agent] = fields;
+      });
+
+      try {
+        const resp = await fetch("/api/settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            providers,
+            defaults: {
+              review_required: $("optReview").checked,
+              auto_synthesize: $("optAutoSynthesize").checked,
+              max_rounds: Number($("optMaxRounds").value) || 3
+            }
+          })
+        });
+        if (!resp.ok) throw new Error("保存失败");
+        $("saveStatus").textContent = "✓ 已保存";
+        setTimeout(() => { $("saveStatus").textContent = ""; }, 2000);
+      } catch (err) {
+        $("saveStatus").textContent = "保存失败：" + err.message;
+      }
+    });
+
+    loadSettings();
+  </script>
+
+  <style>
+    .provider-list { display: flex; flex-direction: column; gap: 16px; }
+    .provider-card {
+      padding: 16px 18px; background: var(--surface);
+      border-radius: var(--radius); border: 1px solid var(--border);
+    }
+    .provider-header { margin-bottom: 10px; }
+    .provider-header strong { font-size: 15px; }
+    .provider-header .muted { display: block; font-size: 13px; margin-top: 2px; }
+    .provider-mode { display: flex; gap: 16px; margin-bottom: 10px; font-size: 14px; }
+    .provider-mode label { cursor: pointer; display: flex; align-items: center; gap: 4px; }
+    .provider-status { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+    .tag {
+      display: inline-block; padding: 2px 8px; font-size: 12px;
+      border-radius: 4px; background: var(--surface-2);
+    }
+    .tag.ok { background: var(--accent-soft); color: #047857; }
+    .tag.warn { background: var(--warn-soft); color: var(--warn); }
+    .provider-api-fields { display: flex; flex-direction: column; gap: 8px; }
+    .provider-api-fields label { font-size: 13px; color: var(--ink-soft); }
+    .input-sm {
+      width: 100%; padding: 6px 10px; border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm); font-size: 14px; margin-top: 2px;
+    }
+    .settings-grid { display: flex; flex-direction: column; gap: 14px; }
+    .setting-item {
+      display: flex; flex-direction: column; gap: 2px;
+      padding: 12px 14px; background: var(--surface); border-radius: var(--radius-sm);
+    }
+    .setting-item span { font-weight: 600; font-size: 14px; }
+    .setting-item small { font-size: 12px; color: var(--muted); }
+    .setting-item input[type="checkbox"] { width: 18px; height: 18px; margin-top: 4px; }
+    .setting-item input[type="number"] { width: 80px; padding: 4px 8px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
+  </style>
+</body>
+</html>

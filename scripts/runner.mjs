@@ -524,7 +524,7 @@ export async function runAgent(agentId, options = {}) {
   return result;
 }
 
-async function spawnAgent(config, prompt) {
+export async function spawnAgent(config, prompt) {
   return new Promise((resolve, reject) => {
     const args = [...config.args];
     if (config.inputVia === "arg") {
