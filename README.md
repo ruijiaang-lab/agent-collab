@@ -124,7 +124,7 @@
  [自动模式 ON]       ─┘   floor 切到 agent 时自动触发 └─► codex exec  (装好 CLI 即接入)
 ```
 
-- **零 API key**：runner 只用 CLI 已登录的额度；公开仓库永远不会读你的 `.env`
+- **零 API key 入库**：公开仓库不包含任何 key；runner 优先用 CLI 已登录的额度，也可通过 `.env` 配置第三方端点
 - **两个闸**：手动「唤醒」按钮 + 全局「自动模式」开关；自动模式有 `maxRounds` 上限
 - **JSON 输出契约**：agent 输出统一 envelope（`action / stance / content / nextFloor`…），解析失败自动 fallback 到 `post_message`
 - **安全护栏**：每个 agent 同时只能跑一个进程（per-agent lock），90 秒超时 SIGKILL，Claude 调用强制 `--max-budget-usd 0.50`
@@ -158,19 +158,44 @@
 
 ## v0.5：极简模式（非技术用户友好）
 
-不想学圆桌概念？打开 `/simple`，三步搞定：
+不想学圆桌概念？打开 `/simple`，像和 ChatGPT 聊天一样用：
 
-1. **选一种讨论方式**（比较 / 批评 / 规划 / 自由讨论）
-2. **写清楚你想聊什么**（一段话即可）
-3. **等 AI 讨论完，拿走结论**（可复制 / 下载 Markdown）
+```
+┌──────────────────────────────┐
+│   Agent Collab               │
+│                              │
+│   🟠 你                       │
+│   为什么人在洗澡的时候最容    │
+│   易想到好点子？               │
+│                              │
+│   🔵 Claude Code              │
+│   有一个角度值得注意：       │
+│   洗澡是少数几乎不产生...     │
+│                              │
+│   🟢 Hermes                   │
+│   • 正在思考···              │
+│                              │
+│ ┌────────────────────────────┐ │
+│ │ [三AI对比][改稿][评计划]  │ │
+│ │ 问点什么···         ⏎  │ │
+│ └────────────────────────────┘ │
+└──────────────────────────────┘
+```
 
-全程不需要理解"主席 / 发言权 / 提案"这些概念。讨论过程实时可见，刷新页面也不会丢进度。
+1. **点一种讨论方式**（比较 / 批评 / 规划 / 自由讨论）——底部出现对应 chip
+2. **写一段你想聊的**——Enter 发送，Shift+Enter 换行
+3. **看 AI 接力发言**——每条消息带头像、名字和立场标签，正在思考的 AI 显示跳动圆点
+4. **拿走结论**——最下方自动生成结构化总结，一键复制或下载 Markdown
+
+全程不需要理解"主席 / 发言权 / 提案"这些概念。刷新页面也不会丢进度。
 
 高级模式（`/chair`）仍然保留，给需要精细控制的开发者用。
 
 ---
 
 ## 快速开始
+
+**前提条件**：Node ≥ 20 + 至少一个 AI CLI 已登录（或配置了第三方 API 端点）。
 
 ```bash
 git clone https://github.com/ruijiaang-lab/agent-collab.git
@@ -199,13 +224,21 @@ docker run --rm -p 5057:5057 -v "$(pwd)/data:/app/data" agent-collab
 
 ## 接入真 Agent
 
-公开仓库不包含任何 API key。runner 直接 spawn 你已经在终端登录过的 CLI：
+公开仓库不包含任何 API key。你有**两种方式**让 Agent 跑起来：
 
-- **Claude Code**：装好官方 `claude` CLI 并 `claude login`，再起 server 就行
-- **Hermes**：装好你的 `hermes` 工具链（默认走 `hermes -z` 单次模式）
-- **Codex**：CLI 装好后把 `agentConfigs.codex.enabled` 改成 `true`（默认关）
+### 方式 A：CLI 已登录（推荐本地开发）
 
-需要换成第三方端点（OpenRouter、ThinkAI、自建代理）的话，复制 `.env.example` 为 `.env` 并填入：
+runner 直接 spawn 你已经在终端登录过的 CLI，不需要填任何 key：
+
+| Agent | 前提 | 启用状态 |
+|---|---|---|
+| **Claude Code** | 装好 `claude` CLI 并 `claude login` | 默认开 |
+| **Hermes** | 装好 `hermes` 工具链（默认走 `hermes -z` 单次模式） | 默认开 |
+| **Codex** | 装好 Codex CLI | 默认关，需改 `agentConfigs.codex.enabled` |
+
+### 方式 B：第三方 API 端点（.env）
+
+如果 CLI 没登录，或者你想走代理（OpenRouter、ThinkAI、自建端点），复制 `.env.example` 为 `.env` 并填入你的 key：
 
 ```bash
 cp .env.example .env
@@ -214,17 +247,29 @@ cp .env.example .env
 ```ini
 # .env（已在 .gitignore，不会提交到 git）
 
-# Claude Code
+# Claude Code — 留空则走官方 Anthropic API（需要 CLI 已登录）
 AGENT_COLLAB_CLAUDE_BASE_URL=https://your-proxy.example.com
 AGENT_COLLAB_CLAUDE_API_KEY=sk-...
-AGENT_COLLAB_CLAUDE_MODEL=claude-sonnet-4-6
+# 不要填 MODEL，让代理自动选择；填错模型名会导致 400 错误
+AGENT_COLLAB_CLAUDE_MODEL=
 
-# Hermes
+# Hermes — 同上
 AGENT_COLLAB_HERMES_BASE_URL=https://your-proxy.example.com
-AGENT_COLLAB_HERMES_API_KEY=sk-...
+AGENT_COLLAB_HERMES_API_KEY=
 ```
 
-留空则走官方 Anthropic API（需要 CLI 已登录）。server 启动时自动读取 `.env`，无需额外配置。
+> **注意**：`AGENT_COLLAB_CLAUDE_MODEL` 留空即可。第三方代理通常有自己支持的模型列表，填错名字会报 `400 Param Incorrect`。不填则由代理自动选择默认模型。
+
+server 启动时自动读取 `.env`，无需额外配置。两种方式可以混用（比如 Claude 走 .env，Hermes 走 CLI 登录）。
+
+### 常见问题
+
+| 现象 | 原因 | 解决 |
+|---|---|---|
+| `401 Invalid API Key` | key 过期或错误 | 检查 `.env` 里的 key，或重新 `claude login` |
+| `400 Param Incorrect` | `AGENT_COLLAB_CLAUDE_MODEL` 填了代理不支持的模型名 | 把 MODEL 设为空 |
+| agent 卡在"正在思考"超时 | CLI 未登录且没配 .env | 至少配一种认证方式 |
+| `没找到已启用的 AI runner` | server 启动时检测不到可用 CLI | 确认 `claude` / `hermes` 在 PATH 里，或配了 .env |
 
 ---
 

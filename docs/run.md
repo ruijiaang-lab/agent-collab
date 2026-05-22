@@ -12,7 +12,8 @@ Requires Node ≥ 20. Zero dependencies — `npm install` is not needed.
 git clone https://github.com/ruijiaang-lab/agent-collab.git
 cd agent-collab
 npm start
-# Open http://127.0.0.1:5057
+# 极简模式：http://127.0.0.1:5057/simple
+# 高级模式：http://127.0.0.1:5057/chair
 ```
 
 Run the smoke test:
@@ -32,7 +33,8 @@ git clone https://github.com/ruijiaang-lab/agent-collab.git
 cd agent-collab
 docker build -t agent-collab .
 docker run --rm -p 5057:5057 -v "$(pwd)/data:/app/data" agent-collab
-# Open http://127.0.0.1:5057
+# 极简模式：http://127.0.0.1:5057/simple
+# 高级模式：http://127.0.0.1:5057/chair
 ```
 
 Run on a different host port:
@@ -78,7 +80,8 @@ services:
 
 ```bash
 docker compose up -d
-# Open http://127.0.0.1:5057
+# 极简模式：http://127.0.0.1:5057/simple
+# 高级模式：http://127.0.0.1:5057/chair
 docker compose logs -f          # tail logs
 docker compose down             # stop
 ```
@@ -87,15 +90,28 @@ docker compose down             # stop
 
 ## Configuration
 
-All knobs are environment variables. Defaults work for local single-user mode.
+### 环境变量
 
-| Variable | Default | Meaning |
+| 变量 | 默认值 | 说明 |
 |---|---|---|
-| `PORT` | `5057` | HTTP port the WebUI + REST API listen on |
+| `PORT` | `5057` | HTTP 端口 |
+| `AGENT_COLLAB_DATA_DIR` | `./data` | state.json 存储目录 |
 
-Agent-runner config (for the upcoming v0.3 real-agent module) lives in `.env`
-— see `.env.example` when v0.3 ships. The public repo never contains real API
-keys; you bring your own.
+### Agent 配置（.env）
+
+Agent runner 的认证信息在 `.env` 文件里（已 gitignore，不会提交到公开仓库）。
+
+```bash
+cp .env.example .env
+# 编辑 .env，填入你的 API 端点和 key
+```
+
+完整配置项见 `.env.example`。两种认证方式：
+
+1. **CLI 已登录**：不填 .env，直接用本地已登录的 `claude` / `hermes` CLI
+2. **第三方 API 端点**：填 `.env` 里的 BASE_URL 和 API_KEY
+
+> **注意**：`AGENT_COLLAB_CLAUDE_MODEL` 建议留空。第三方代理通常有自己支持的模型列表，填错名字会报 `400 Param Incorrect`。
 
 ---
 
