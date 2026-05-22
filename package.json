@@ -1,6 +1,6 @@
 {
   "name": "agent-collab",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "Chair-authority multi-agent collaboration hub for Codex, Claude Code, and Hermes.",
   "type": "module",

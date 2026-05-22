@@ -202,5 +202,15 @@ def get_runner_state() -> str:
     return json.dumps(api("/api/agents/inflight"), ensure_ascii=False, indent=2)
 
 
+@mcp.tool()
+def conclude_meeting(agent: str, format: str = "summary") -> str:
+    """Have an agent synthesize the current round into a structured deliverable.
+    agent: claude-code / hermes / codex (must have its CLI enabled).
+    format: summary (结论纪要) / actions (行动项清单) / weekly (对外周报).
+    Returns the saved decision record (with full markdown rationale). Blocks until the agent finishes (~20-60s)."""
+    payload = {"agent": agent, "format": format}
+    return json.dumps(api("/api/meeting/conclude", "POST", payload), ensure_ascii=False, indent=2)
+
+
 if __name__ == "__main__":
     mcp.run()

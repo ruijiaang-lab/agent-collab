@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent Collab · 三个 AI 帮你讨论</title>
+  <link rel="stylesheet" href="/simple.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="title">Agent Collab</div>
+    <div class="actions">
+      <button id="newBtn" class="link-btn" hidden>＋ 新讨论</button>
+      <button id="stopBtn" class="link-btn" hidden>■ 中止</button>
+      <a class="link-btn" href="/chair" title="给开发者用的高级模式">高级模式 →</a>
+    </div>
+  </header>
+
+  <main id="chat" class="chat">
+    <div id="empty" class="empty-state">
+      <h1>三个 AI 帮你讨论</h1>
+      <p class="sub">挑一种方式，写一段你想聊的，等它们讨论完拿走结论。</p>
+      <p id="agentsHint" class="hint">正在检查可用的 AI…</p>
+    </div>
+    <ol id="messages" class="messages"></ol>
+  </main>
+
+  <footer class="composer-bar">
+    <div class="composer-inner">
+      <div id="chips" class="chips"></div>
+      <form id="composer" class="composer">
+        <textarea
+          id="brief"
+          rows="1"
+          placeholder="点上面任意一张卡片选择讨论方式，再把你想聊的写下来…"
+        ></textarea>
+        <button type="submit" id="sendBtn" class="send-btn" disabled title="开始讨论">↑</button>
+      </form>
+      <p id="hint" class="composer-hint">三个 AI 会按顺序发言，全程约 30-90 秒。</p>
+    </div>
+  </footer>
+
+  <script src="/simple.js"></script>
+</body>
+</html>

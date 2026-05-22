@@ -4,6 +4,8 @@ let expandedMotionId = null;
 let inflight = new Set();
 let auto = { autoMode: false, autoMaxRounds: 10, autoRoundsRemaining: 0 };
 let agentConfigs = {};
+let concludeFormats = [];
+let concludeRunning = false;
 
 const $ = (id) => document.getElementById(id);
 
@@ -40,11 +42,16 @@ function timeLabel(iso) {
 }
 
 async function load() {
-  const [s, runner] = await Promise.all([api(stateUrl), api("/api/agents/inflight")]);
+  const [s, runner, fmts] = await Promise.all([
+    api(stateUrl),
+    api("/api/agents/inflight"),
+    concludeFormats.length ? Promise.resolve({ formats: concludeFormats }) : api("/api/meeting/conclude/formats")
+  ]);
   state = s;
   inflight = new Set(runner.inflight || []);
   auto = runner.auto || auto;
   agentConfigs = runner.configs || {};
+  concludeFormats = fmts.formats || concludeFormats;
   render();
 }
 
@@ -65,6 +72,8 @@ async function refreshInflight() {
 function render() {
   $("updatedAt").textContent = `更新于 ${timeLabel(state.meta.updatedAt)}`;
   renderAutoControls();
+  renderConcludeForm();
+  renderConclusions();
   renderChair();
   renderAgents();
   renderMeeting();
@@ -86,6 +95,100 @@ function renderAutoControls() {
   if (document.activeElement !== maxRounds) {
     maxRounds.value = auto.autoMaxRounds || 10;
   }
+}
+
+function renderConcludeForm() {
+  const agentSel = $("concludeAgent");
+  const fmtSel = $("concludeFormat");
+  if (!agentSel || !fmtSel) return;
+  // Only sync option lists if user isn't actively editing (preserves focus).
+  if (document.activeElement === agentSel || document.activeElement === fmtSel) return;
+  const eligible = (state?.agents || [])
+    .filter((a) => agentConfigs[a.id]?.enabled !== false);
+  agentSel.innerHTML = eligible
+    .map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`)
+    .join("");
+  fmtSel.innerHTML = (concludeFormats || [])
+    .map((f) => `<option value="${escapeHtml(f.key)}">${escapeHtml(f.label)}</option>`)
+    .join("");
+}
+
+function renderConclusions() {
+  const container = $("conclusions");
+  if (!container) return;
+  const items = (state?.decisions || []).filter((d) => d.kind === "conclusion");
+  if (items.length === 0) {
+    container.innerHTML = "";
+    return;
+  }
+  const [latest, ...rest] = items;
+  const restHtml = rest.length === 0 ? "" : `
+    <details class="conclusion-history">
+      <summary>历史结论（${rest.length}）</summary>
+      ${rest.map(renderConclusionCard).join("")}
+    </details>`;
+  container.innerHTML = `
+    <div class="conclusion-block latest">
+      <div class="conclusion-head">
+        <span class="conclusion-badge">最新结论</span>
+        <strong>${escapeHtml(latest.title)}</strong>
+        <span class="muted">${timeLabel(latest.createdAt)}</span>
+        <button type="button" class="conclusion-copy" data-conclusion="${escapeHtml(latest.id)}" title="复制 markdown 到剪贴板">复制</button>
+      </div>
+      <div class="conclusion-body">${renderMarkdown(latest.rationale || "")}</div>
+    </div>
+    ${restHtml}`;
+}
+
+function renderConclusionCard(decision) {
+  return `
+    <div class="conclusion-block">
+      <div class="conclusion-head">
+        <strong>${escapeHtml(decision.title)}</strong>
+        <span class="muted">${timeLabel(decision.createdAt)}</span>
+        <button type="button" class="conclusion-copy" data-conclusion="${escapeHtml(decision.id)}" title="复制 markdown">复制</button>
+      </div>
+      <div class="conclusion-body">${renderMarkdown(decision.rationale || "")}</div>
+    </div>`;
+}
+
+// Tiny markdown renderer — headings + lists + bold + line breaks. Anything more
+// elaborate isn't worth a dep; the conclusion prompts limit to plain markdown.
+function renderMarkdown(md) {
+  const lines = md.split("\n");
+  const out = [];
+  let inList = false;
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    if (/^### /.test(line))      { closeList(); out.push(`<h4>${escapeHtml(line.slice(4))}</h4>`); continue; }
+    if (/^## /.test(line))       { closeList(); out.push(`<h3>${escapeHtml(line.slice(3))}</h3>`); continue; }
+    if (/^# /.test(line))        { closeList(); out.push(`<h3>${escapeHtml(line.slice(2))}</h3>`); continue; }
+    if (/^- \[[ x]\] /i.test(line)) {
+      openList();
+      const checked = /^- \[x\]/i.test(line);
+      const text = line.replace(/^- \[[ x]\]\s*/i, "");
+      out.push(`<li class="check"><input type="checkbox" disabled ${checked?"checked":""}/> ${formatInline(text)}</li>`);
+      continue;
+    }
+    if (/^[-•] /.test(line)) {
+      openList();
+      out.push(`<li>${formatInline(line.slice(2))}</li>`);
+      continue;
+    }
+    if (line === "") { closeList(); out.push(""); continue; }
+    closeList();
+    out.push(`<p>${formatInline(line)}</p>`);
+  }
+  closeList();
+  return out.join("\n");
+  function openList() { if (!inList) { out.push("<ul>"); inList = true; } }
+  function closeList() { if (inList) { out.push("</ul>"); inList = false; } }
+}
+
+function formatInline(text) {
+  return escapeHtml(text)
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
 }
 
 function renderChair() {
@@ -687,6 +790,58 @@ document.querySelectorAll(".view-btn").forEach((btn) => {
     $("swimlanes").classList.toggle("hidden", view !== "swimlane");
     $("messages").classList.toggle("hidden", view !== "timeline");
   });
+});
+
+// Conclude panel — toggle visibility + submit.
+$("concludeToggle")?.addEventListener("click", () => {
+  const form = $("concludeForm");
+  if (!form) return;
+  form.classList.toggle("hidden");
+  if (!form.classList.contains("hidden")) $("concludeAgent")?.focus();
+});
+
+$("concludeCancel")?.addEventListener("click", () => {
+  $("concludeForm")?.classList.add("hidden");
+  $("concludeStatus").textContent = "";
+});
+
+$("concludeForm")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (concludeRunning) return;
+  const agent = $("concludeAgent").value;
+  const format = $("concludeFormat").value;
+  if (!agent) return;
+  concludeRunning = true;
+  const submitBtn = event.target.querySelector("button[type=submit]");
+  submitBtn.disabled = true;
+  $("concludeStatus").textContent = `${agent} 生成中…（20-60s）`;
+  try {
+    await api("/api/meeting/conclude", { method: "POST", body: { agent, format } });
+    $("concludeStatus").textContent = "✓ 已生成（见会议卡片）";
+    setTimeout(() => { $("concludeStatus").textContent = ""; $("concludeForm")?.classList.add("hidden"); }, 2400);
+  } catch (error) {
+    $("concludeStatus").textContent = `失败：${error.message}`;
+  } finally {
+    concludeRunning = false;
+    submitBtn.disabled = false;
+  }
+});
+
+// Copy a conclusion's markdown to clipboard.
+$("conclusions")?.addEventListener("click", async (event) => {
+  const btn = event.target.closest("button[data-conclusion]");
+  if (!btn) return;
+  const id = btn.dataset.conclusion;
+  const item = (state?.decisions || []).find((d) => d.id === id);
+  if (!item) return;
+  try {
+    await navigator.clipboard.writeText(item.rationale || "");
+    const old = btn.textContent;
+    btn.textContent = "已复制";
+    setTimeout(() => { btn.textContent = old; }, 1500);
+  } catch {
+    alert("复制失败，请手动选择");
+  }
 });
 
 const events = new EventSource("/api/stream");

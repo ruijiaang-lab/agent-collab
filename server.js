@@ -10,12 +10,14 @@ import {
   setAutoMode,
   getAutoState,
   scheduleAuto,
-  agentConfigs
+  agentConfigs,
+  concludeMeeting,
+  getConclusionFormats
 } from "./scripts/runner.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 5057);
-const DATA_DIR = path.join(__dirname, "data");
+const DATA_DIR = process.env.AGENT_COLLAB_DATA_DIR || path.join(__dirname, "data");
 const STATE_PATH = path.join(DATA_DIR, "state.json");
 const PUBLIC_DIR = path.join(__dirname, "public");
 
@@ -124,6 +126,73 @@ const DEFAULT_STATE = {
     updatedAt: new Date().toISOString()
   }
 };
+
+// Simple-mode templates. Each is a small recipe that turns a one-shot brief
+// from a non-technical user into a chair directive + auto-mode meeting. The
+// front-end never surfaces "floor / motion / directive" — it only shows the
+// brief box, the agent cards mid-discussion, and the conclusion at the end.
+const SIMPLE_TEMPLATES = [
+  {
+    id: "compare",
+    title: "三 AI 对比方案",
+    icon: "📊",
+    description: "在几个选项里选哪个？让 AI 分别从不同角度帮你权衡。",
+    placeholder: "例：我在考虑用 React 还是 Vue 重构这个项目，团队 3 个人都没写过 Vue……",
+    conclusion: "summary",
+    buildDirective: (brief, agents) =>
+      `用户面临一个需要权衡的选择。原始描述：\n\n"""\n${brief}\n"""\n\n` +
+      `请参与讨论的 AI（${agents.join("、")}）各自完成以下任务：\n` +
+      `1. 简短复述你理解到的核心选择是什么（一句话）。\n` +
+      `2. 给出你倾向的那一个选项，并列 2-3 条具体理由（避免空话）。\n` +
+      `3. 指出对方选项的最大风险或代价。\n\n` +
+      `禁止：互相客套、和稀泥、输出"看情况"这种没有立场的结论。每人最多 200 字。`
+  },
+  {
+    id: "critique",
+    title: "三 AI 改稿",
+    icon: "✍️",
+    description: "贴一段文字（文案 / 邮件 / 简历 / PRD），让 AI 帮你诊断和改。",
+    placeholder: "例：贴上你的初稿，告诉我们这是给谁看的、目的是什么……",
+    conclusion: "actions",
+    buildDirective: (brief, agents) =>
+      `用户提交了一段需要改进的文字。原文 + 背景：\n\n"""\n${brief}\n"""\n\n` +
+      `请参与讨论的 AI（${agents.join("、")}）各自完成以下任务：\n` +
+      `1. 指出原文最致命的 1-2 个问题（结构 / 受众 / 语气 / 信息密度）。\n` +
+      `2. 给出 1 段重写的开头（不超过 80 字），示范你建议的方向。\n` +
+      `3. 列出 2-3 条具体可执行的修改清单。\n\n` +
+      `禁止：泛泛说"可以更生动"。每条建议必须能直接动手改。`
+  },
+  {
+    id: "plan",
+    title: "三 AI 评计划",
+    icon: "📅",
+    description: "贴出你的计划或方案，让 AI 帮你挑漏洞、补盲点、排优先级。",
+    placeholder: "例：我打算下个月发布新版本，目前的计划是……",
+    conclusion: "actions",
+    buildDirective: (brief, agents) =>
+      `用户提出了一份待评估的计划。计划描述：\n\n"""\n${brief}\n"""\n\n` +
+      `请参与讨论的 AI（${agents.join("、")}）各自完成以下任务：\n` +
+      `1. 用 1 句话总结你看到的最大盲点或风险。\n` +
+      `2. 指出计划里被低估的工作量或前置条件。\n` +
+      `3. 给出 2-3 条你建议立刻添加的行动项（带负责人建议）。\n\n` +
+      `禁止：复述用户已经写过的内容。重点是补、挑、排。`
+  },
+  {
+    id: "free",
+    title: "自由讨论",
+    icon: "💬",
+    description: "想到什么写什么。AI 会按自己的视角接力，最后给你一份纪要。",
+    placeholder: "例：今天我在思考……",
+    conclusion: "summary",
+    buildDirective: (brief, agents) =>
+      `用户开启了一次开放式讨论。话题：\n\n"""\n${brief}\n"""\n\n` +
+      `请参与讨论的 AI（${agents.join("、")}）按以下方式接力：\n` +
+      `1. 不要重复前一位说过的论点。\n` +
+      `2. 每人给出一个新的视角或问题，控制在 150 字以内。\n` +
+      `3. 在结尾留下一个值得下一位接的问题。\n\n` +
+      `禁止：罗列大纲式回答、写超过 200 字。`
+  }
+];
 
 let state = ensureStateShape(await loadState());
 const clients = new Set();
@@ -337,7 +406,8 @@ initRunner({
   setFloor,
   recordEvent,
   persist,
-  broadcast
+  broadcast,
+  id
 });
 
 function exportMarkdown() {
@@ -474,7 +544,7 @@ async function handleApi(req, res, url) {
     const content = sanitizeText(body.content);
     if (!content) return json(res, 400, { error: "content is required" });
     const previousFloor = state.meeting.floor;
-    const message = addMessage({ agent, type: "roundtable-turn", content: `【${stance}】${content}` });
+    const message = addMessage({ agent, type: "turn", content: `【${stance}】${content}` });
     if (body.nextFloor) state.meeting.floor = sanitizeText(body.nextFloor, state.meeting.floor);
     await persist();
     broadcast();
@@ -696,6 +766,106 @@ async function handleApi(req, res, url) {
     });
   }
 
+  // Conclusion mode. Picks an agent to synthesize the round's discussion into
+  // a structured deliverable (summary / actions / weekly). Different from a
+  // normal turn: no envelope, no floor change, output lands in decisions[].
+  if (req.method === "GET" && url.pathname === "/api/meeting/conclude/formats") {
+    return json(res, 200, { formats: getConclusionFormats() });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/meeting/conclude") {
+    const body = await readJson(req);
+    const agentId = sanitizeText(body.agent);
+    const format = sanitizeText(body.format, "summary");
+    if (!agentId) return json(res, 400, { error: "agent is required" });
+    if (agentId === "chair") return json(res, 403, { error: "chair cannot synthesize — pick claude-code / hermes / codex" });
+    const config = agentConfigs[agentId];
+    if (!config) return json(res, 404, { error: `unknown agent: ${agentId}` });
+    if (config.enabled === false) return json(res, 503, { error: `agent ${agentId} runner is disabled (CLI not installed?)` });
+    if (getInflight().has(agentId)) return json(res, 409, { error: `agent ${agentId} is already in-flight` });
+    // Synchronous wait so the WebUI can show the resulting decision card.
+    // Real cost: 20-60s on haiku; UI surfaces a spinner.
+    const result = await concludeMeeting({ agentId, format, triggeredBy: "manual" });
+    if (!result.ok) return json(res, 502, { error: result.error });
+    return json(res, 201, { ok: true, decision: result.decision });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Simple-mode sessions. The "newbie" path: user picks a template + types a
+  // brief; the server sets up the whole meeting in one call, kicks the auto
+  // chain, and the front-end watches via SSE until the chain returns to chair,
+  // then triggers conclude. No floor / motion / directive concepts surfaced.
+  // ---------------------------------------------------------------------------
+  if (req.method === "GET" && url.pathname === "/api/sessions/templates") {
+    return json(res, 200, { templates: SIMPLE_TEMPLATES.map(({ id, title, icon, description, placeholder }) => ({
+      id, title, icon, description, placeholder
+    })) });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/sessions") {
+    const body = await readJson(req);
+    const templateId = sanitizeText(body.template, "free");
+    const brief = sanitizeText(body.brief);
+    if (!brief) return json(res, 400, { error: "brief is required" });
+    const template = SIMPLE_TEMPLATES.find((t) => t.id === templateId) || SIMPLE_TEMPLATES[SIMPLE_TEMPLATES.length - 1];
+
+    const enabledAgents = ["claude-code", "hermes", "codex"]
+      .filter((id) => agentConfigs[id] && agentConfigs[id].enabled !== false);
+    if (enabledAgents.length === 0) return json(res, 503, { error: "no agent runners enabled" });
+
+    // Bump round so the new discussion is cleanly separable from past rounds.
+    state.meeting.round = (state.meeting.round || 1) + 1;
+    state.meeting.title = `${template.title} · ${brief.slice(0, 40)}${brief.length > 40 ? "…" : ""}`;
+    state.meeting.objective = brief;
+    state.meeting.phase = "debate";
+    state.meeting.updatedAt = new Date().toISOString();
+
+    const sessionId = id();
+    state.meeting.session = {
+      id: sessionId,
+      templateId: template.id,
+      sequence: enabledAgents,
+      conclusionAgent: enabledAgents.includes("claude-code") ? "claude-code" : enabledAgents[0],
+      conclusionFormat: template.conclusion,
+      startedAt: new Date().toISOString(),
+      status: "running"
+    };
+
+    const directive = {
+      id: id(),
+      title: `[${template.title}] ${brief.slice(0, 30)}${brief.length > 30 ? "…" : ""}`,
+      content: template.buildDirective(brief, enabledAgents),
+      priority: "highest",
+      status: "active",
+      createdAt: new Date().toISOString()
+    };
+    state.directives.unshift(directive);
+    addMessage({ agent: "chair", type: "chair-directive", content: `${directive.title}\n${directive.content}` });
+
+    // Enable auto with N rounds = number of agents (one turn each).
+    await setAutoMode({ enabled: true, maxRounds: enabledAgents.length });
+    state.meeting.floor = enabledAgents[0];
+
+    recordEvent({
+      type: "session.started",
+      actor: "chair",
+      payload: { sessionId, templateId: template.id, sequence: enabledAgents }
+    });
+
+    await persist();
+    broadcast();
+    scheduleAuto(state.meeting.floor);
+
+    return json(res, 201, {
+      sessionId,
+      template: { id: template.id, title: template.title, icon: template.icon },
+      sequence: enabledAgents,
+      conclusionAgent: state.meeting.session.conclusionAgent,
+      conclusionFormat: template.conclusion,
+      startedRound: state.meeting.round
+    });
+  }
+
   // Server-sent events for WebUI live updates. Renamed from /api/events
   // (which is now the append-only event log) to /api/stream in v0.3.
   if (req.method === "GET" && (url.pathname === "/api/stream" || url.pathname === "/api/events/stream")) {
@@ -752,7 +922,14 @@ async function handleApi(req, res, url) {
 }
 
 async function serveStatic(req, res, url) {
-  const requested = url.pathname === "/" ? "/index.html" : decodeURIComponent(url.pathname);
+  // Friendly aliases: "/" → simple-mode entry for non-tech users;
+  // "/chair" → old chair-authority WebUI for people who want to drive manually.
+  const aliases = {
+    "/": "/simple.html",
+    "/simple": "/simple.html",
+    "/chair": "/index.html"
+  };
+  const requested = aliases[url.pathname] || decodeURIComponent(url.pathname);
   const filePath = path.normalize(path.join(PUBLIC_DIR, requested));
   if (!filePath.startsWith(PUBLIC_DIR)) return json(res, 403, { error: "forbidden" });
 
@@ -766,7 +943,10 @@ async function serveStatic(req, res, url) {
       ".js": "text/javascript; charset=utf-8",
       ".svg": "image/svg+xml"
     };
-    res.writeHead(200, { "content-type": types[ext] || "application/octet-stream" });
+    res.writeHead(200, {
+      "content-type": types[ext] || "application/octet-stream",
+      "cache-control": "no-cache, must-revalidate"
+    });
     res.end(await readFile(filePath));
   } catch {
     json(res, 404, { error: "not found" });

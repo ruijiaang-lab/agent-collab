@@ -136,13 +136,48 @@
 
 ---
 
+## v0.4.1：一键生成结论（chair 不用自己写收尾）
+
+讨论完不再要主席手敲总结——指定一位 agent 把本轮的发言、投票、裁决、主席指令**综合成结构化交付物**：
+
+| 输出格式 | 用途 |
+|---|---|
+| **结论纪要** | 共识 / 分歧 / 行动项（带 owner + 截止）/ 风险 / 下一步 |
+| **行动项清单** | 纯 checklist，每项 owner + 截止 + 关联提案 |
+| **对外周报** | 业务语言，本周进展 / 关键决策 / 下周计划 / 风险求助 |
+
+入口：WebUI 顶栏「**生成结论**」按钮 → 选 agent + 格式 → 生成（20-60s）→ 落进会议卡片置顶 + decisions[] + 可一键复制。
+
+也提供：
+- API：`POST /api/meeting/conclude {agent, format}` · `GET /api/meeting/conclude/formats`
+- MCP：`conclude_meeting(agent, format)`
+
+实测一次：Claude（haiku） 在 4 轮 auth 重构讨论上 17.9 秒输出 700 字结构化纪要，含 4 条带负责人和截止的行动项。
+
+---
+
+## v0.5：极简模式（非技术用户友好）
+
+不想学圆桌概念？打开 `/simple`，三步搞定：
+
+1. **选一种讨论方式**（比较 / 批评 / 规划 / 自由讨论）
+2. **写清楚你想聊什么**（一段话即可）
+3. **等 AI 讨论完，拿走结论**（可复制 / 下载 Markdown）
+
+全程不需要理解"主席 / 发言权 / 提案"这些概念。讨论过程实时可见，刷新页面也不会丢进度。
+
+高级模式（`/chair`）仍然保留，给需要精细控制的开发者用。
+
+---
+
 ## 快速开始
 
 ```bash
 git clone https://github.com/ruijiaang-lab/agent-collab.git
 cd agent-collab
 npm start
-# 浏览器打开 http://127.0.0.1:5057
+# 极简模式：http://127.0.0.1:5057/simple
+# 高级模式：http://127.0.0.1:5057/chair
 ```
 
 跑测试：
@@ -162,22 +197,34 @@ docker run --rm -p 5057:5057 -v "$(pwd)/data:/app/data" agent-collab
 
 ---
 
-## 接入真 Agent（v0.4 已实装）
+## 接入真 Agent
 
-公开仓库不包含任何 API key——也不会要。runner 直接 spawn 你已经在终端登录过的 CLI：
+公开仓库不包含任何 API key。runner 直接 spawn 你已经在终端登录过的 CLI：
 
 - **Claude Code**：装好官方 `claude` CLI 并 `claude login`，再起 server 就行
 - **Hermes**：装好你的 `hermes` 工具链（默认走 `hermes -z` 单次模式）
 - **Codex**：CLI 装好后把 `agentConfigs.codex.enabled` 改成 `true`（默认关）
 
-需要换成第三方端点（OpenRouter、自建代理）的话，覆盖对应环境变量即可：
+需要换成第三方端点（OpenRouter、ThinkAI、自建代理）的话，复制 `.env.example` 为 `.env` 并填入：
 
 ```bash
-export AGENT_COLLAB_CLAUDE_BIN=/path/to/your/claude-wrapper
-export AGENT_COLLAB_HERMES_BIN=/path/to/your/hermes-wrapper
+cp .env.example .env
 ```
 
-> **再说一遍**：runner 不读 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`。所有"对话额度"来自你 CLI 已经登录的账号。
+```ini
+# .env（已在 .gitignore，不会提交到 git）
+
+# Claude Code
+AGENT_COLLAB_CLAUDE_BASE_URL=https://your-proxy.example.com
+AGENT_COLLAB_CLAUDE_API_KEY=sk-...
+AGENT_COLLAB_CLAUDE_MODEL=claude-sonnet-4-6
+
+# Hermes
+AGENT_COLLAB_HERMES_BASE_URL=https://your-proxy.example.com
+AGENT_COLLAB_HERMES_API_KEY=sk-...
+```
+
+留空则走官方 Anthropic API（需要 CLI 已登录）。server 启动时自动读取 `.env`，无需额外配置。
 
 ---
 
@@ -211,7 +258,7 @@ npm run agent -- export
 
 可用 tools：
 
-`get_state` · `post_message` · `chair_directive` · `update_meeting` · `roundtable_turn` · `propose_motion` · `cast_vote` · `get_motion_chain` · `list_events` · `create_task` · `update_task` · `record_decision` · `update_handoff` · `export_handoff` · `wake_agent` · `set_auto_mode` · `get_runner_state`
+`get_state` · `post_message` · `chair_directive` · `update_meeting` · `roundtable_turn` · `propose_motion` · `cast_vote` · `get_motion_chain` · `list_events` · `create_task` · `update_task` · `record_decision` · `update_handoff` · `export_handoff` · `wake_agent` · `set_auto_mode` · `get_runner_state` · `conclude_meeting`
 
 ---
 
@@ -243,7 +290,8 @@ npm run agent -- export
 - [x] **v0.2** Docker 一键启动 + 启动文档（[docs/run.md](docs/run.md)）
 - [x] **v0.3** Agent 投票 + 事件溯源 + 决策链回放 + 三轨泳道 UI
 - [x] **v0.4** 真 Agent runner：本地 CLI subprocess + 手动唤醒 + 自动模式闸（不读 API key）
-- [ ] **v0.5** 时间旅行 / 决策快照回放
+- [x] **v0.4.1** 一键生成结论：agent 综合本轮讨论 → 结论纪要 / 行动项 / 对外周报
+- [x] **v0.5** 极简模式：非技术用户三步完成讨论，刷新不丢进度，支持第三方 API 端点
 - [ ] **v1.0** 多会议并行 + 会议模板 + Cursor / Devin 接入
 
 ---

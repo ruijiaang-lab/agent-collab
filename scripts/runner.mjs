@@ -27,6 +27,22 @@
 //   countdown and refuse to spawn when it hits 0.
 
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+
+// Load .env from project root if present (no external deps)
+try {
+  const envFile = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", ".env");
+  for (const line of readFileSync(envFile, "utf8").split("\n")) {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) continue;
+    const eq = t.indexOf("=");
+    if (eq < 1) continue;
+    const k = t.slice(0, eq).trim(), v = t.slice(eq + 1).trim();
+    if (k && !(k in process.env)) process.env[k] = v;
+  }
+} catch { /* .env is optional */ }
 
 // ---------------------------------------------------------------------------
 // Dependency injection — server.js passes its state + helpers in via init().
@@ -48,14 +64,31 @@ function requireDeps() {
 // To add a new agent, register it here; no other change needed.
 // ---------------------------------------------------------------------------
 
+// Optional env overrides — set in .env (never commit .env).
+const _claudeBaseUrl = process.env.AGENT_COLLAB_CLAUDE_BASE_URL || "";
+const _claudeModel   = process.env.AGENT_COLLAB_CLAUDE_MODEL    || "";
+const _claudeApiKey  = process.env.AGENT_COLLAB_CLAUDE_API_KEY  || "";
+const _hermesBaseUrl = process.env.AGENT_COLLAB_HERMES_BASE_URL || "";
+const _hermesApiKey  = process.env.AGENT_COLLAB_HERMES_API_KEY  || "";
+
 export const agentConfigs = {
   "claude-code": {
     bin: process.env.AGENT_COLLAB_CLAUDE_BIN || "claude",
-    // --model haiku → ~10x cheaper and ~3x faster than the default Opus route,
-    // which matters because we're spawning per-turn. --max-budget-usd caps a
-    // single call from blowing up if the model wanders. 180s is the empirical
-    // ceiling we've seen for a full prompt; below that we get spurious timeouts.
-    args: ["-p", "--output-format", "json", "--model", "haiku", "--max-budget-usd", "0.50"],
+    args: [
+      "-p",
+      "--output-format", "json",
+      ...(_claudeModel ? ["--model", _claudeModel] : []),
+      "--max-turns", "1",
+      "--max-budget-usd", "0.50",
+      "--no-session-persistence",
+      "--strict-mcp-config",
+      "--mcp-config", "{\"mcpServers\":{}}",
+      "--tools", "Bash,Read,Edit,Write,Grep,Glob,LS,TodoWrite,Task,WebSearch,WebFetch,NotebookRead,NotebookEdit,MultiEdit,ExitPlanMode"
+    ],
+    env: {
+      ...(_claudeBaseUrl && { ANTHROPIC_BASE_URL: _claudeBaseUrl }),
+      ...(_claudeApiKey  && { ANTHROPIC_API_KEY:  _claudeApiKey  }),
+    },
     inputVia: "arg",
     parseWrapper: "claude-json",
     timeoutMs: 180_000,
@@ -64,6 +97,10 @@ export const agentConfigs = {
   hermes: {
     bin: process.env.AGENT_COLLAB_HERMES_BIN || "hermes",
     args: ["-z"],
+    env: {
+      ...(_hermesBaseUrl && { ANTHROPIC_BASE_URL: _hermesBaseUrl }),
+      ...(_hermesApiKey  && { ANTHROPIC_API_KEY:  _hermesApiKey  }),
+    },
     inputVia: "arg",
     parseWrapper: "raw",
     timeoutMs: 180_000,
@@ -269,10 +306,28 @@ function normalizeEnvelope(raw, fallbackContent) {
   const action = ["post_message", "cast_vote", "propose_motion", "do_nothing"].includes(raw.action)
     ? raw.action
     : "post_message";
+
+  // Some models (especially via third-party endpoints) double-wrap their reply
+  // — the outer envelope's content field is itself a JSON-stringified envelope.
+  // Peel up to 3 layers so the rendered turn doesn't show raw JSON.
+  let contentField = typeof raw.content === "string" && raw.content.trim() ? raw.content : fallbackContent;
+  for (let depth = 0; depth < 3; depth++) {
+    const trimmed = (contentField || "").trim();
+    if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) break;
+    try {
+      const inner = JSON.parse(trimmed);
+      if (inner && typeof inner === "object" && typeof inner.content === "string" && inner.content.trim()) {
+        contentField = inner.content;
+        continue;
+      }
+    } catch { /* not valid JSON — stop unwrapping */ }
+    break;
+  }
+
   return {
     action,
     stance: typeof raw.stance === "string" ? raw.stance : "观点",
-    content: typeof raw.content === "string" && raw.content.trim() ? raw.content : fallbackContent,
+    content: contentField,
     position: ["support", "oppose", "abstain"].includes(raw.position) ? raw.position : null,
     motionId: typeof raw.motionId === "string" ? raw.motionId : null,
     title: typeof raw.title === "string" ? raw.title : null,
@@ -282,10 +337,27 @@ function normalizeEnvelope(raw, fallbackContent) {
 }
 
 function fallbackEnvelope(rawText) {
+  let content = (rawText || "").slice(0, 4000);
+  let stance = "观点";
+
+  // Sometimes the model returns a clean envelope JSON but with an unescaped
+  // control char inside `content` (multi-line content). JSON.parse rejects it,
+  // so we land here — but the structure is still recoverable via regex.
+  const stanceMatch = content.match(/"stance"\s*:\s*"([^"]{1,20})"/);
+  if (stanceMatch) stance = stanceMatch[1];
+
+  // Greedy match: grab everything from `"content":"` up to the last `","next` or
+  // `"}` that ends the field. Good enough to peel one envelope layer when JSON
+  // parsing fails on the raw output.
+  const contentMatch = content.match(/"content"\s*:\s*"([\s\S]*?)"\s*,\s*"next/);
+  if (contentMatch) {
+    content = contentMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"');
+  }
+
   return {
     action: "post_message",
-    stance: "观点",
-    content: rawText.slice(0, 800),
+    stance,
+    content: content.slice(0, 4000),
     position: null,
     motionId: null,
     title: null,
@@ -403,6 +475,19 @@ export async function runAgent(agentId, options = {}) {
     const prompt = buildPrompt(agentId);
     const rawStdout = await spawnAgent(config, prompt);
     const envelope = parseEnvelope(rawStdout, config.parseWrapper);
+
+    // Debug aid: when parsing falls back, dump the raw stdout so we can see
+    // what the model actually emitted. File path is intentionally hardcoded
+    // to /tmp — this only fires on the fallback path, so volume is bounded.
+    if (envelope._fallback) {
+      try {
+        const ts = new Date().toISOString().replace(/[:.]/g, "-");
+        const dumpPath = `/tmp/agent-collab-fallback-${agentId}-${ts}.log`;
+        const fs = await import("node:fs");
+        fs.writeFileSync(dumpPath, `agent=${agentId}\nwrapper=${config.parseWrapper}\n--- rawStdout ---\n${rawStdout}\n`);
+      } catch { /* best-effort */ }
+    }
+
     const summary = await dispatchAction(agentId, envelope);
 
     recordEvent({
@@ -442,9 +527,17 @@ export async function runAgent(agentId, options = {}) {
 async function spawnAgent(config, prompt) {
   return new Promise((resolve, reject) => {
     const args = [...config.args];
-    if (config.inputVia === "arg") args.push(prompt);
+    if (config.inputVia === "arg") {
+      const printArgIndex = args.findIndex((arg) => arg === "-p" || arg === "--print");
+      if (printArgIndex >= 0) {
+        args.splice(printArgIndex + 1, 0, prompt);
+      } else {
+        args.push(prompt);
+      }
+    }
 
     const child = spawn(config.bin, args, {
+      env: { ...process.env, ...(config.env || {}) },
       stdio: [config.inputVia === "stdin" ? "pipe" : "ignore", "pipe", "pipe"]
     });
 
@@ -532,4 +625,201 @@ async function maybeContinueAuto(result, _options) {
   const newFloor = result.summary?.newFloor;
   if (!newFloor) return;
   scheduleAuto(newFloor);
+}
+
+// ---------------------------------------------------------------------------
+// Conclusion mode. Different prompt, different output handling: agent gets the
+// full round transcript and is asked to synthesize a structured summary. Output
+// is treated as raw markdown — no JSON envelope, no floor change, no auto chain.
+// The result lands in state.decisions[] and as a dedicated "conclusion" message.
+// ---------------------------------------------------------------------------
+
+const CONCLUSION_FORMATS = {
+  summary: {
+    label: "结论纪要",
+    instruction: `按以下结构输出 markdown：
+## 共识
+## 分歧
+## 行动项
+（每项格式：- [ ] 任务 · @负责人 · 截止）
+## 风险
+## 下一步`
+  },
+  actions: {
+    label: "行动项清单",
+    instruction: `只输出一个 markdown checklist，每项格式：
+- [ ] 任务描述 · @负责人 · 截止时间 · 关联提案ID（如有）
+不要前言后语，不要其他章节。`
+  },
+  weekly: {
+    label: "对外周报",
+    instruction: `按"对外周报"口吻输出 markdown：
+### 本周进展
+### 关键决策
+### 下周计划
+### 风险与求助
+要求：去掉技术细节，用业务语言；每节 3-5 个 bullet；不超过 400 字。`
+  }
+};
+
+export function getConclusionFormats() {
+  return Object.entries(CONCLUSION_FORMATS).map(([key, value]) => ({ key, label: value.label }));
+}
+
+function summarizeAllRoundMessages(messages, agentDisplayName, currentRound) {
+  // For conclusion synthesis we want the WHOLE current round, not just last 15.
+  const inRound = messages.filter((m) => (m.round || 1) === currentRound);
+  if (inRound.length === 0) return "（本轮暂无发言）";
+  return inRound.map((m) => {
+    const who = agentDisplayName(m.agent);
+    const stance = stanceFromMessage(m);
+    return `[${who} · ${stance}] ${m.content}`;
+  }).join("\n\n");
+}
+
+function summarizeRoundDirectives(directives, sessionStartedAt) {
+  const active = directives
+    .filter((d) => d.status === "active")
+    .filter((d) => !sessionStartedAt || (d.createdAt || "") >= sessionStartedAt)
+    .sort((a, b) => priorityWeight(b.priority) - priorityWeight(a.priority))
+    .slice(0, 5);
+  if (active.length === 0) return "（本轮暂无主席指令）";
+  return active.map((d) => `• [${d.priority}] ${d.title}\n  ${d.content}`).join("\n");
+}
+
+function summarizeRoundMotions(motions, currentRound) {
+  const inRound = motions.filter((m) => (m.round || 1) === currentRound);
+  if (inRound.length === 0) return "（本轮暂无提案）";
+  return inRound.map((m) => {
+    const tally = tallyVotes(m.votes || []);
+    const ruling = m.ruling ? `\n  主席裁决：${m.ruling}` : "";
+    return `• [${m.status}] ${m.title}
+  提案人：${m.proposedBy} · 票型：支持${tally.support}/反对${tally.oppose}/弃权${tally.abstain}
+  理由：${m.rationale}${ruling}`;
+  }).join("\n");
+}
+
+export function buildConclusionPrompt(agentId, format = "summary") {
+  const { getState, agentDisplayName } = requireDeps();
+  const state = getState();
+  const agent = state.agents.find((a) => a.id === agentId);
+  if (!agent) throw new Error(`unknown agent: ${agentId}`);
+  const formatSpec = CONCLUSION_FORMATS[format] || CONCLUSION_FORMATS.summary;
+
+  return `你是 **${agent.name}**，被主席指定为本轮圆桌会议的**结论综合者**。
+你的任务**不是**继续发言或表态，而是**冷静总结**整轮讨论。
+
+== 会议信息 ==
+议题：${state.meeting.title}
+目标：${state.meeting.objective}
+当前轮次：R${state.meeting.round}
+
+== 本轮主席指令 ==
+${summarizeRoundDirectives(state.directives, state.meeting.session?.startedAt)}
+
+== 本轮提案（含投票与裁决）==
+${summarizeRoundMotions(state.motions, state.meeting.round)}
+
+== 本轮全部发言 ==
+${summarizeAllRoundMessages(state.messages, agentDisplayName, state.meeting.round)}
+
+== 你的任务：输出${formatSpec.label} ==
+${formatSpec.instruction}
+
+要求：
+1. 严格客观，区分"共识"与"个人观点"。
+2. 行动项要可执行：有负责人、有截止、有验收条件。
+3. 不要编造没有出现在以上材料里的内容。
+4. **直接输出 markdown**，不要 \`\`\` 包裹，不要 JSON 信封，不要前言后语。
+5. 控制在 600 字以内。`;
+}
+
+export async function concludeMeeting({ agentId, format = "summary", triggeredBy = "manual" } = {}) {
+  const { getState, recordEvent, persist, broadcast, addMessage, id: makeId } = requireDeps();
+  const config = agentConfigs[agentId];
+  if (!config) return { ok: false, error: `unknown agent: ${agentId}` };
+  if (config.enabled === false) return { ok: false, error: `agent ${agentId} runner is disabled` };
+  if (inflight.has(agentId)) return { ok: false, error: `agent ${agentId} is already in-flight` };
+  if (!CONCLUSION_FORMATS[format]) return { ok: false, error: `unknown format: ${format}` };
+
+  inflight.add(agentId);
+  recordEvent({
+    type: "meeting.concluding",
+    actor: agentId,
+    payload: { format, triggeredBy, round: getState().meeting.round }
+  });
+  broadcast("inflight");
+  await persist();
+
+  let result;
+  try {
+    const prompt = buildConclusionPrompt(agentId, format);
+    const rawStdout = await spawnAgent(config, prompt);
+    const markdown = extractMarkdown(rawStdout, config.parseWrapper);
+
+    const state = getState();
+    const formatSpec = CONCLUSION_FORMATS[format];
+    const decision = {
+      id: makeId(),
+      title: `R${state.meeting.round} · ${formatSpec.label}（由 ${agentId} 综合）`,
+      rationale: markdown,
+      kind: "conclusion",
+      format,
+      author: agentId,
+      round: state.meeting.round,
+      createdAt: new Date().toISOString()
+    };
+    state.decisions.unshift(decision);
+
+    addMessage({
+      agent: agentId,
+      type: "conclusion",
+      content: `【${formatSpec.label}】\n\n${markdown}`
+    });
+
+    if (state.meeting.session) {
+      state.meeting.session.status = "completed";
+      state.meeting.session.endedAt = new Date().toISOString();
+      state.meeting.session.decisionId = decision.id;
+    }
+    state.meeting.autoMode = false;
+    state.meeting.autoRoundsRemaining = 0;
+    state.meeting.updatedAt = new Date().toISOString();
+
+    recordEvent({
+      type: "meeting.concluded",
+      actor: agentId,
+      payload: { format, round: state.meeting.round, decisionId: decision.id }
+    });
+
+    result = { ok: true, decision };
+  } catch (error) {
+    recordEvent({
+      type: "meeting.conclude.failed",
+      actor: agentId,
+      payload: { format, error: error.message }
+    });
+    result = { ok: false, error: error.message };
+  } finally {
+    inflight.delete(agentId);
+    await persist();
+    broadcast("state");
+    broadcast("inflight");
+  }
+
+  return result;
+}
+
+function extractMarkdown(rawStdout, parseWrapper) {
+  const cleaned = (rawStdout || "").trim();
+  if (!cleaned) return "（agent 无输出）";
+  if (parseWrapper === "claude-json") {
+    try {
+      const wrapper = JSON.parse(cleaned);
+      return (wrapper.result || wrapper.message || wrapper.content || cleaned).trim();
+    } catch {
+      return cleaned;
+    }
+  }
+  return cleaned;
 }

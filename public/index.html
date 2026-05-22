@@ -22,6 +22,16 @@
             <span id="autoRemaining" class="muted">剩余 0 轮</span>
             <input id="autoMaxRounds" type="number" min="1" max="50" value="10" title="自动模式单次最多轮数" />
           </div>
+          <div class="conclude-panel">
+            <button id="concludeToggle" class="button-primary" title="挑一位 agent 综合本轮讨论，输出结论 / 行动项 / 周报">生成结论</button>
+            <form id="concludeForm" class="conclude-form hidden">
+              <select id="concludeAgent" title="哪位 agent 来综合"></select>
+              <select id="concludeFormat" title="输出格式"></select>
+              <button type="submit">生成</button>
+              <button type="button" id="concludeCancel" title="收起">×</button>
+              <span id="concludeStatus" class="muted"></span>
+            </form>
+          </div>
           <button id="refreshBtn" title="刷新状态">刷新</button>
           <a class="button" href="/api/export" target="_blank" rel="noreferrer">导出会议纪要</a>
         </div>
@@ -52,6 +62,7 @@
               <span id="updatedAt" class="muted"></span>
             </div>
             <div id="meetingSummary" class="meeting-summary"></div>
+            <div id="conclusions" class="conclusions"></div>
             <form id="meetingForm" class="meeting-form">
               <input id="meetingTitle" placeholder="会议议题" />
               <textarea id="meetingObjective" rows="2" placeholder="主席设定本轮目标、边界和成功标准"></textarea>
