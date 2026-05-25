@@ -28,6 +28,16 @@
 
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { execSync } from "node:child_process";
+
+function cliExists(bin) {
+  try {
+    execSync(`which ${bin}`, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -112,8 +122,7 @@ export const agentConfigs = {
     inputVia: "stdin",
     parseWrapper: "raw",
     timeoutMs: 180_000,
-    // Disabled until the user installs Codex CLI. UI will surface this.
-    enabled: false
+    enabled: cliExists(process.env.AGENT_COLLAB_CODEX_BIN || "codex")
   }
 };
 
